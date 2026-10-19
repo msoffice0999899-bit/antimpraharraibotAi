@@ -118,7 +118,7 @@ DEFAULT_QUIZZES = [
     },
     {
         "question": "पौधों में प्रकाश संश्लेषण (Photosynthesis) के लिए कौन सी गैस आवश्यक है?",
-        "options": ["ऑक्सीजन (O2)", "नाइट्रोजन (N2)", "कार्बन डाइऑक्साइड (CO2)", "हीलियम"],
+        "options": ["ऑक्सीजन (O2)", "नाइटु्रोजन (N2)", "कार्बन डाइऑक्साइड (CO2)", "हीलियम"],
         "correct_option_id": 2,
         "explanation": "पौधे सूर्य के प्रकाश और CO2 की सहायता से अपना भोजन बनाते हैं।"
     }
@@ -161,9 +161,10 @@ def send_welcome(message):
         "✨ *मुख्य फीचर्स:*\n"
         "🔹 `/quiz` - Telegram क्विज़ खेलें (बिल्कुल फ्री, 0 टोकन)\n"
         "🔹 `/ask <सवाल>` - किसी भी विषय पर मुझसे पूछें\n"
+        "🔹 *क्विज़ पर Reply करें* - किसी भी क्विज़ पोल पर रिप्लाई करके डाउट पूछें\n"
         "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा\n"
         "🔹 `/help` - सहायता मेनू\n\n"
-        "💡 *ग्रुप में इस्तेमाल:* मुझे ग्रुप में ऐड करें और सवाल पूछने के लिए मुझे टैग करें या `/ask` लिखें।"
+        "💡 *ग्रुप में इस्तेमाल:* मुझे ग्रुप में ऐड करें और सवाल पूछने के लिए मुझे टैग करें या रिप्लाई करें।"
     )
     bot.reply_to(message, text, parse_mode="Markdown")
 
@@ -256,6 +257,18 @@ def handle_text(message):
 
     if is_private or is_tagged or is_reply:
         clean_text = message.text.replace(bot_username, "").strip()
+
+        # स्मार्ट फीचर: अगर किसी Quiz Poll पर Reply किया गया है
+        if message.reply_to_message and message.reply_to_message.poll:
+            poll = message.reply_to_message.poll
+            opts = ", ".join([opt.text for opt in poll.options])
+            clean_text = (
+                f"छात्र इस क्विज़ प्रश्न पर डाउट पूछ रहा है:\n"
+                f"प्रश्न: {poll.question}\n"
+                f"विकल्प: {opts}\n\n"
+                f"छात्र का सवाल/डाउट: {clean_text if clean_text else 'कृपया इस क्विज़ का सही उत्तर और पूरी व्याख्या विस्तार से समझाएं।'}"
+            )
+
         if clean_text:
             answer_text_query(message, clean_text)
 
