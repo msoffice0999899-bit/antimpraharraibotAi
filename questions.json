@@ -1,0 +1,72 @@
+[
+  {
+    "category": "science",
+    "question": "मानव शरीर की सबसे बड़ी ग्रंथि (Largest Gland) कौन सी है?",
+    "options": ["यकृत (Liver)", "थायरॉयड (Thyroid)", "अग्न्याशय (Pancreas)", "पीयूष (Pituitary)"],
+    "correct_option_id": 0,
+    "explanation": "मानव शरीर की सबसे बड़ी ग्रंथि यकृत (Liver) है, जिसका वजन लगभग 1.5 किलोग्राम होता है।"
+  },
+  {
+    "category": "science",
+    "question": "प्रकाश वर्ष (Light Year) किसकी इकाई (Unit) है?",
+    "options": ["समय (Time)", "दूरी (Distance)", "प्रकाश की गति (Speed of Light)", "ऊर्जा (Energy)"],
+    "correct_option_id": 1,
+    "explanation": "प्रकाश वर्ष खगोलीय दूरी (Astronomical Distance) मापने की इकाई है।"
+  },
+  {
+    "category": "history",
+    "question": "पानीपत की पहली लड़ाई (First Battle of Panipat) किस वर्ष लड़ी गई थी?",
+    "options": ["1526", "1556", "1761", "1530"],
+    "correct_option_id": 0,
+    "explanation": "पानीपत का पहला युद्ध 21 अप्रैल 1526 को बाबर और इब्राहिम लोदी के बीच हुआ था।"
+  },
+  {
+    "category": "history",
+    "question": "भारतीय संविधान का जनक (Father of Indian Constitution) किसे कहा जाता है?",
+    "options": ["महात्मा गांधी", "डॉ. बी. आर. अम्बेडकर", "जवाहरलाल नेहरू", "डॉ. राजेंद्र प्रसाद"],
+    "correct_option_id": 1,
+    "explanation": "डॉ. भीमराव अम्बेडकर प्रारूप समिति के अध्यक्ष थे और उन्हें संविधान का जनक माना जाता है।"
+  },
+  {
+    "category": "geography",
+    "question": "भारत की सबसे लंबी नदी कौन सी है?",
+    "options": ["यमुना", "ब्रह्मपुत्र", "गंगा", "गोदावरी"],
+    "correct_option_id": 2,
+    "explanation": "गंगा भारत की सबसे लंबी नदी है, जिसकी लंबाई लगभग 2,525 किमी है।"
+  },
+  {
+    "category": "geography",
+    "question": "विश्व का सबसे बड़ा महाद्वीप (Continent) कौन सा है?",
+    "options": ["अफ्रीका", "यूरोप", "उत्तर अमेरिका", "एशिया"],
+    "correct_option_id": 3,
+    "explanation": "एशिया दुनिया का सबसे बड़ा और सबसे अधिक आबादी वाला महाद्वीप है।"
+  },
+  {
+    "category": "polity",
+    "question": "भारतीय संविधान में मौलिक अधिकार (Fundamental Rights) किस देश से लिए गए हैं?",
+    "options": ["ब्रिटेन", "संयुक्त राज्य अमेरिका (USA)", "रूस", "आयरलैंड"],
+    "correct_option_id": 1,
+    "explanation": "मौलिक अधिकार संयुक्त राज्य अमेरिका (US Bill of Rights) के संविधान से प्रेरित हैं।"
+  },
+  {
+    "category": "math",
+    "question": "यदि किसी वृत्त की त्रिज्या (Radius) 7 सेमी है, तो उसका क्षेत्रफल (Area) क्या होगा? (π = 22/7)",
+    "options": ["44 वर्ग सेमी", "154 वर्ग सेमी", "144 वर्ग सेमी", "308 वर्ग सेमी"],
+    "correct_option_id": 1,
+    "explanation": "Area = π * r^2 = (22/7) * 7 * 7 = 154 cm²."
+  },
+  {
+    "category": "science",
+    "question": "पौधों में प्रकाश संश्लेषण (Photosynthesis) के लिए कौन सी गैस आवश्यक है?",
+    "options": ["ऑक्सीजन (O2)", "नाइट्रोजन (N2)", "कार्बन डाइऑक्साइड (CO2)", "हाइड्रोजन (H2)"],
+    "correct_option_id": 2,
+    "explanation": "पौधे क्लोरोफिल और सूर्य के प्रकाश की उपस्थिति में कार्बन डाइऑक्साइड (CO2) और पानी से भोजन बनाते हैं।"
+  },
+  {
+    "category": "gk",
+    "question": "इसरो (ISRO) का मुख्यालय (Headquarters) कहाँ स्थित है?",
+    "options": ["नई दिल्ली", "मुंबई", "बेंगलुरु", "हैदराबाद"],
+    "correct_option_id": 2,
+    "explanation": "भारतीय अंतरिक्ष अनुसंधान संगठन (ISRO) का मुख्यालय बेंगलुरु, कर्नाटक में स्थित है।"
+  }
+]
