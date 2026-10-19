@@ -35,17 +35,28 @@ GEMINI_MODELS = [
     "gemini-3.7-flash"
 ]
 
+# छोटा और सटीक उत्तर देने के लिए सख्त निर्देश (Strict Concise Prompt)
+SYSTEM_PROMPT = (
+    "You are a smart, concise AI study tutor for a Telegram student group. "
+    "Rules for answers:\n"
+    "1. Keep answers SHORT, CRISP, and TO-THE-POINT (maximum 4 to 6 bullet points).\n"
+    "2. State the direct answer in the very first line with a checkmark (e.g. '✅ सही उत्तर: ...').\n"
+    "3. Give 3-4 bullet points explaining the reason and key facts.\n"
+    "4. Do NOT write long paragraphs, introductions, or repetitive conclusions.\n"
+    "5. Use clear, simple Hindi / Hinglish."
+)
+
 # ================= 2. GEMINI REST API CLIENT =================
 def call_gemini(parts, system_instruction=None):
-    """Calls Gemini REST API directly with automatic model fallback & retry."""
+    """Calls Gemini REST API with strict token limits for short answers."""
     if not GEMINI_API_KEY:
         return "⚠️ Gemini API Key कॉन्फ़िगर नहीं है। कृपया Render पर GEMINI_API_KEY जोड़ें।"
 
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "maxOutputTokens": 1500,
-            "temperature": 0.7
+            "maxOutputTokens": 450,  # छोटा और सटीक उत्तर रखने के लिए लिमिट 450 रखी है
+            "temperature": 0.4
         }
     }
 
@@ -65,12 +76,11 @@ def call_gemini(parts, system_instruction=None):
             headers={"Content-Type": "application/json"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=25) as response:
+            with urllib.request.urlopen(req, timeout=20) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 candidates = result.get("candidates", [])
                 if candidates:
                     parts_out = candidates[0].get("content", {}).get("parts", [])
-                    # Extract text from all parts, skipping thinking blocks
                     text_parts = [p.get("text", "") for p in parts_out if "text" in p and not p.get("thought", False)]
                     final_text = "".join(text_parts).strip()
                     if final_text:
@@ -80,7 +90,6 @@ def call_gemini(parts, system_instruction=None):
             err_body = e.read().decode("utf-8", errors="ignore")
             logger.warning(f"Model {model_name} HTTP {e.code}: {err_body[:100]}")
             last_error = f"HTTP {e.code}"
-            # If server busy (503), wait 1 sec and try next model
             if e.code == 503:
                 time.sleep(1)
             continue
@@ -89,14 +98,7 @@ def call_gemini(parts, system_instruction=None):
             last_error = str(e)
             continue
 
-    return f"❌ AI सर्वर व्यस्त है ({last_error}), कृपया 10 सेकंड बाद पुनः प्रयास करें।"
-
-SYSTEM_PROMPT = (
-    "You are an intelligent, friendly AI tutor for students in a Telegram study group. "
-    "Provide clear, accurate, step-by-step explanations in simple Hindi / Hinglish. "
-    "Always state the correct answer clearly, give the reason, and explain key points. "
-    "Keep answers well-structured with bullet points and easy to read on mobile."
-)
+    return f"❌ AI सर्वर व्यस्त है ({last_error}), कृपया कुछ सेकंड बाद पुनः प्रयास करें।"
 
 # ================= 3. OFFLINE QUIZ BANK (0 TOKENS) =================
 DEFAULT_QUIZZES = [
@@ -171,13 +173,12 @@ threading.Thread(target=run_health_server, daemon=True).start()
 def send_welcome(message):
     text = (
         "📚 *नमस्ते! मैं आपका AI Study & Quiz Bot हूँ।* 🎓\n\n"
-        "✨ *मुख्य फीचर्स:*\n"
+        "✨ *कमांड्स:*\n"
         "🔹 `/quiz` - Telegram क्विज़ खेलें (बिल्कुल फ्री, 0 टोकन)\n"
         "🔹 `/ask <सवाल>` - किसी भी विषय पर मुझसे पूछें\n"
         "🔹 *क्विज़ पर Reply करें* - किसी भी सवाल पर रिप्लाई करके `@Aantimpraharr_bot Explain me` लिखें\n"
         "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा\n"
-        "🔹 `/help` - सहायता मेनू\n\n"
-        "💡 *ग्रुप में इस्तेमाल:* सवाल पूछने के लिए मुझे मेंशन करें या रिप्लाई करें।"
+        "🔹 `/help` - सहायता मेनू"
     )
     bot.reply_to(message, text, parse_mode="Markdown")
 
@@ -221,22 +222,20 @@ def handle_photo(message):
     is_tagged = bot_username and (bot_username.lower() in caption.lower())
     is_reply = (message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id)
 
-    # In groups, only respond if tagged, replied, or caption starts with /ask
     if not (is_private or is_tagged or is_reply or caption.startswith("/ask")):
         return
 
-    status = bot.reply_to(message, "🔍 फोटो का विश्लेषण किया जा रहा है, कृपया प्रतीक्षा करें...")
+    status = bot.reply_to(message, "🔍 फोटो देखी जा रही है...")
     try:
         bot.send_chat_action(message.chat.id, "typing")
         
-        # Download photo
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded = bot.download_file(file_info.file_path)
         base64_img = base64.b64encode(downloaded).decode("utf-8")
 
         prompt = caption.replace(bot_username, "").replace("/ask", "").strip()
         if not prompt:
-            prompt = "इस फोटो में दिए गए प्रश्न को पहचानें और छात्र के लिए स्टेप-बाय-स्टेप सरल भाषा में इसका हल और व्याख्या समझाएं।"
+            prompt = "इस फोटो में दिए गए प्रश्न को पहचानें और छात्र के लिए 3-4 बुलेट पॉइंट्स में संक्षेप में हल समझाएं।"
 
         parts = [
             {"text": prompt},
@@ -271,7 +270,6 @@ def handle_text(message):
     if is_private or is_tagged or (is_reply and bot_username.lower() in message.text.lower()):
         clean_text = message.text.replace(bot_username, "").strip()
 
-        # किसी भी मैसेज या दूसरे बॉट के क्विज़ पर रिप्लाई को हैंडल करना
         quoted_content = ""
         if message.reply_to_message:
             rep = message.reply_to_message
@@ -285,9 +283,9 @@ def handle_text(message):
 
         if quoted_content:
             query = (
-                f"छात्र ने ग्रुप में निम्नलिखित प्रश्न पर रिप्लाई करके डाउट पूछा है:\n\n"
+                f"छात्र ने ग्रुप में निम्नलिखित प्रश्न पर संक्षेप में उत्तर माँगा है:\n\n"
                 f"{quoted_content}\n\n"
-                f"छात्र का सवाल / अनुरोध: {clean_text if clean_text else 'कृपया इस प्रश्न का सही उत्तर, कारण और पूरी व्याख्या आसान हिंदी में समझाएं।'}"
+                f"छात्र का सवाल / अनुरोध: {clean_text if clean_text else 'कृपया सिर्फ सही उत्तर और 3-4 मुख्य बिंदु संक्षेप में बताएं।'}"
             )
         else:
             query = clean_text
