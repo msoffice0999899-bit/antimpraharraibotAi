@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import time
 import base64
 import random
 import logging
@@ -24,19 +25,26 @@ if not TELEGRAM_BOT_TOKEN:
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# Gemini Models list with auto-fallback
-GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-3.8-flash"]
+# Super-fast Lite & Flash models in order of highest availability & zero 503 errors
+GEMINI_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash"
+]
 
 # ================= 2. GEMINI REST API CLIENT =================
 def call_gemini(parts, system_instruction=None):
-    """Calls Gemini REST API directly with automatic model fallback."""
+    """Calls Gemini REST API directly with automatic model fallback & retry."""
     if not GEMINI_API_KEY:
         return "⚠️ Gemini API Key कॉन्फ़िगर नहीं है। कृपया Render पर GEMINI_API_KEY जोड़ें।"
 
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "maxOutputTokens": 2000,
+            "maxOutputTokens": 1500,
             "temperature": 0.7
         }
     }
@@ -57,12 +65,12 @@ def call_gemini(parts, system_instruction=None):
             headers={"Content-Type": "application/json"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=40) as response:
+            with urllib.request.urlopen(req, timeout=25) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 candidates = result.get("candidates", [])
                 if candidates:
                     parts_out = candidates[0].get("content", {}).get("parts", [])
-                    # Extract text from all parts, ignoring thought signatures
+                    # Extract text from all parts, skipping thinking blocks
                     text_parts = [p.get("text", "") for p in parts_out if "text" in p and not p.get("thought", False)]
                     final_text = "".join(text_parts).strip()
                     if final_text:
@@ -70,15 +78,18 @@ def call_gemini(parts, system_instruction=None):
                 return "माफ़ कीजिये, इस प्रश्न का उत्तर नहीं मिल पाया।"
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="ignore")
-            logger.warning(f"Model {model_name} HTTP {e.code}: {err_body[:120]}")
+            logger.warning(f"Model {model_name} HTTP {e.code}: {err_body[:100]}")
             last_error = f"HTTP {e.code}"
+            # If server busy (503), wait 1 sec and try next model
+            if e.code == 503:
+                time.sleep(1)
             continue
         except Exception as e:
             logger.warning(f"Error calling {model_name}: {e}")
             last_error = str(e)
             continue
 
-    return f"❌ AI सर्वर व्यस्त है ({last_error}), कृपया कुछ देर बाद पुनः प्रयास करें।"
+    return f"❌ AI सर्वर व्यस्त है ({last_error}), कृपया 10 सेकंड बाद पुनः प्रयास करें।"
 
 SYSTEM_PROMPT = (
     "You are an intelligent, friendly AI tutor for students in a Telegram study group. "
@@ -163,7 +174,7 @@ def send_welcome(message):
         "✨ *मुख्य फीचर्स:*\n"
         "🔹 `/quiz` - Telegram क्विज़ खेलें (बिल्कुल फ्री, 0 टोकन)\n"
         "🔹 `/ask <सवाल>` - किसी भी विषय पर मुझसे पूछें\n"
-        "🔹 *किसी भी मैसेज/क्विज़ पर Reply करें* - किसी भी सवाल पर रिप्लाई करके `@Aantimpraharr_bot Explain me` लिखें\n"
+        "🔹 *क्विज़ पर Reply करें* - किसी भी सवाल पर रिप्लाई करके `@Aantimpraharr_bot Explain me` लिखें\n"
         "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा\n"
         "🔹 `/help` - सहायता मेनू\n\n"
         "💡 *ग्रुप में इस्तेमाल:* सवाल पूछने के लिए मुझे मेंशन करें या रिप्लाई करें।"
