@@ -169,21 +169,34 @@ threading.Thread(target=run_health_server, daemon=True).start()
 
 # ================= 5. TELEGRAM BOT HANDLERS =================
 
+# 1. /start या /help (Private चैट में सिर्फ बताएगा कि ग्रुप में ऐड करें)
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
+    if message.chat.type == "private":
+        bot.reply_to(
+            message,
+            "🔒 *यह बॉट केवल ग्रुप में कार्य करता है!*\n\n"
+            "कृपया इस बॉट को अपने टेलीग्राम स्टडी ग्रुप में ऐड करें और वहाँ इस्तेमाल करें। निजी चैट (Private Chat) में यह कोई जवाब नहीं देता।",
+            parse_mode="Markdown"
+        )
+        return
+
     text = (
         "📚 *नमस्ते! मैं आपका AI Study & Quiz Bot हूँ।* 🎓\n\n"
         "✨ *कमांड्स:*\n"
         "🔹 `/quiz` - Telegram क्विज़ खेलें (बिल्कुल फ्री, 0 टोकन)\n"
         "🔹 `/ask <सवाल>` - किसी भी विषय पर मुझसे पूछें\n"
         "🔹 *क्विज़ पर Reply करें* - किसी भी सवाल पर रिप्लाई करके `@Aantimpraharr_bot Explain me` लिखें\n"
-        "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा\n"
-        "🔹 `/help` - सहायता मेनू"
+        "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा"
     )
     bot.reply_to(message, text, parse_mode="Markdown")
 
+# 2. /quiz कमांड (सिर्फ ग्रुप में चलेगा)
 @bot.message_handler(commands=['quiz'])
 def send_quiz(message):
+    if message.chat.type == "private":
+        return  # प्राइवेट में बिल्कुल शांत रहेगा
+
     q = random.choice(QUIZ_BANK)
     try:
         bot.send_poll(
@@ -199,8 +212,12 @@ def send_quiz(message):
         logger.error(f"Quiz send error: {e}")
         bot.reply_to(message, "⚠️ क्विज़ भेजने में समस्या हुई। कृपया दोबारा प्रयास करें।")
 
+# 3. /ask कमांड (सिर्फ ग्रुप में चलेगा)
 @bot.message_handler(commands=['ask'])
 def handle_ask(message):
+    if message.chat.type == "private":
+        return  # प्राइवेट में कोई जवाब नहीं
+
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         bot.reply_to(message, "कृपया सवाल भी लिखें। उदाहरण:\n`/ask प्रकाश वर्ष क्या है?`", parse_mode="Markdown")
@@ -208,11 +225,14 @@ def handle_ask(message):
     query = parts[1].strip()
     answer_text_query(message, query)
 
+# 4. फोटो डाउट (सिर्फ ग्रुप में चलेगा)
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    is_private = (message.chat.type == "private")
+    # प्राइवेट चैट में बिल्कुल कोई रिप्लाई नहीं देगा
+    if message.chat.type == "private":
+        return
+
     caption = message.caption or ""
-    
     bot_username = ""
     try:
         bot_username = f"@{bot.get_me().username}"
@@ -222,7 +242,7 @@ def handle_photo(message):
     is_tagged = bot_username and (bot_username.lower() in caption.lower())
     is_reply = (message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id)
 
-    if not (is_private or is_tagged or is_reply or caption.startswith("/ask")):
+    if not (is_tagged or is_reply or caption.startswith("/ask")):
         return
 
     status = bot.reply_to(message, "🔍 फोटो देखी जा रही है...")
@@ -254,10 +274,13 @@ def handle_photo(message):
         logger.error(f"Photo handling error: {e}")
         bot.edit_message_text(f"❌ समस्या आई: {e}", chat_id=message.chat.id, message_id=status.message_id)
 
+# 5. टेक्स्ट मैसेज (सिर्फ ग्रुप में चलेगा)
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
-    is_private = (message.chat.type == "private")
-    
+    # प्राइवेट चैट में बिल्कुल कोई रिप्लाई नहीं देगा
+    if message.chat.type == "private":
+        return
+
     bot_username = ""
     try:
         bot_username = f"@{bot.get_me().username}"
@@ -267,7 +290,7 @@ def handle_text(message):
     is_tagged = bot_username and (bot_username.lower() in message.text.lower())
     is_reply = bool(message.reply_to_message)
 
-    if is_private or is_tagged or (is_reply and bot_username.lower() in message.text.lower()):
+    if is_tagged or (is_reply and bot_username.lower() in message.text.lower()):
         clean_text = message.text.replace(bot_username, "").strip()
 
         quoted_content = ""
@@ -308,6 +331,7 @@ if __name__ == "__main__":
     me = bot.get_me()
     print("=" * 50)
     print(f"✅ Bot successfully running as: @{me.username} (Name: {me.first_name})")
+    print(f"🔒 Private Mode: DISABLED (Only works in groups)")
     print(f"🌐 Health server running on port {PORT} for Render 24/7 hosting")
     print("=" * 50)
     bot.infinity_polling(timeout=20, long_polling_timeout=20)
