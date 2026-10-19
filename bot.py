@@ -20,12 +20,16 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PORT = int(os.environ.get("PORT", "8080"))
 
+# Allowed Group IDs (Render Environment Variables से पढ़ा जाएगा)
+ALLOWED_GROUP_IDS_STR = os.environ.get("ALLOWED_GROUP_IDS", "").strip()
+ALLOWED_GROUP_IDS = [gid.strip() for gid in ALLOWED_GROUP_IDS_STR.split(",") if gid.strip()]
+
 if not TELEGRAM_BOT_TOKEN:
     logger.error("TELEGRAM_BOT_TOKEN environment variable not set!")
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# Super-fast Lite & Flash models in order of highest availability & zero 503 errors
+# Super-fast Lite & Flash models
 GEMINI_MODELS = [
     "gemini-3.5-flash-lite",
     "gemini-flash-lite-latest",
@@ -35,7 +39,6 @@ GEMINI_MODELS = [
     "gemini-3.7-flash"
 ]
 
-# छोटा और सटीक उत्तर देने के लिए सख्त निर्देश (Strict Concise Prompt)
 SYSTEM_PROMPT = (
     "You are a smart, concise AI study tutor for a Telegram student group. "
     "Rules for answers:\n"
@@ -46,16 +49,21 @@ SYSTEM_PROMPT = (
     "5. Use clear, simple Hindi / Hinglish."
 )
 
+def is_chat_allowed(chat_id):
+    """Checks if the message is coming from an authorized group."""
+    if not ALLOWED_GROUP_IDS:
+        return True  # अगर कोई ID सेट नहीं है तो डिफ़ॉल्ट रूप से चलेगा
+    return str(chat_id) in ALLOWED_GROUP_IDS
+
 # ================= 2. GEMINI REST API CLIENT =================
 def call_gemini(parts, system_instruction=None):
-    """Calls Gemini REST API with strict token limits for short answers."""
     if not GEMINI_API_KEY:
         return "⚠️ Gemini API Key कॉन्फ़िगर नहीं है। कृपया Render पर GEMINI_API_KEY जोड़ें।"
 
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "maxOutputTokens": 450,  # छोटा और सटीक उत्तर रखने के लिए लिमिट 450 रखी है
+            "maxOutputTokens": 450,
             "temperature": 0.4
         }
     }
@@ -100,7 +108,7 @@ def call_gemini(parts, system_instruction=None):
 
     return f"❌ AI सर्वर व्यस्त है ({last_error}), कृपया कुछ सेकंड बाद पुनः प्रयास करें।"
 
-# ================= 3. OFFLINE QUIZ BANK (0 TOKENS) =================
+# ================= 3. OFFLINE QUIZ BANK =================
 DEFAULT_QUIZZES = [
     {
         "question": "मानव शरीर की सबसे बड़ी ग्रंथि (Largest Gland) कौन सी है?",
@@ -169,16 +177,31 @@ threading.Thread(target=run_health_server, daemon=True).start()
 
 # ================= 5. TELEGRAM BOT HANDLERS =================
 
-# 1. /start या /help (Private चैट में सिर्फ बताएगा कि ग्रुप में ऐड करें)
+# ग्रुप ID जानने के लिए कमांड
+@bot.message_handler(commands=['id', 'groupid'])
+def send_group_id(message):
+    bot.reply_to(message, f"📌 इस चैट का ID है: `{message.chat.id}`", parse_mode="Markdown")
+
+# अनधिकृत ग्रुप में जोड़े जाने पर खुद बाहर निकलना (Auto-Leave)
+@bot.message_handler(content_types=['new_chat_members'])
+def on_user_joins(message):
+    if any(m.id == bot.get_me().id for m in message.new_chat_members):
+        if not is_chat_allowed(message.chat.id):
+            bot.send_message(message.chat.id, "❌ यह बॉट केवल अधिकृत स्टडी ग्रुप में कार्य करने के लिए आरक्षित है।")
+            bot.leave_chat(message.chat.id)
+
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     if message.chat.type == "private":
         bot.reply_to(
             message,
             "🔒 *यह बॉट केवल ग्रुप में कार्य करता है!*\n\n"
-            "कृपया इस बॉट को अपने टेलीग्राम स्टडी ग्रुप में ऐड करें और वहाँ इस्तेमाल करें। निजी चैट (Private Chat) में यह कोई जवाब नहीं देता।",
+            "निजी चैट (Private Chat) में यह कोई जवाब नहीं देता।",
             parse_mode="Markdown"
         )
+        return
+
+    if not is_chat_allowed(message.chat.id):
         return
 
     text = (
@@ -187,15 +210,15 @@ def send_welcome(message):
         "🔹 `/quiz` - Telegram क्विज़ खेलें (बिल्कुल फ्री, 0 टोकन)\n"
         "🔹 `/ask <सवाल>` - किसी भी विषय पर मुझसे पूछें\n"
         "🔹 *क्विज़ पर Reply करें* - किसी भी सवाल पर रिप्लाई करके `@Aantimpraharr_bot Explain me` लिखें\n"
-        "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा"
+        "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा\n"
+        "🔹 `/id` - ग्रुप की ID देखने के लिए"
     )
     bot.reply_to(message, text, parse_mode="Markdown")
 
-# 2. /quiz कमांड (सिर्फ ग्रुप में चलेगा)
 @bot.message_handler(commands=['quiz'])
 def send_quiz(message):
-    if message.chat.type == "private":
-        return  # प्राइवेट में बिल्कुल शांत रहेगा
+    if message.chat.type == "private" or not is_chat_allowed(message.chat.id):
+        return
 
     q = random.choice(QUIZ_BANK)
     try:
@@ -212,11 +235,10 @@ def send_quiz(message):
         logger.error(f"Quiz send error: {e}")
         bot.reply_to(message, "⚠️ क्विज़ भेजने में समस्या हुई। कृपया दोबारा प्रयास करें।")
 
-# 3. /ask कमांड (सिर्फ ग्रुप में चलेगा)
 @bot.message_handler(commands=['ask'])
 def handle_ask(message):
-    if message.chat.type == "private":
-        return  # प्राइवेट में कोई जवाब नहीं
+    if message.chat.type == "private" or not is_chat_allowed(message.chat.id):
+        return
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
@@ -225,11 +247,9 @@ def handle_ask(message):
     query = parts[1].strip()
     answer_text_query(message, query)
 
-# 4. फोटो डाउट (सिर्फ ग्रुप में चलेगा)
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    # प्राइवेट चैट में बिल्कुल कोई रिप्लाई नहीं देगा
-    if message.chat.type == "private":
+    if message.chat.type == "private" or not is_chat_allowed(message.chat.id):
         return
 
     caption = message.caption or ""
@@ -274,11 +294,9 @@ def handle_photo(message):
         logger.error(f"Photo handling error: {e}")
         bot.edit_message_text(f"❌ समस्या आई: {e}", chat_id=message.chat.id, message_id=status.message_id)
 
-# 5. टेक्स्ट मैसेज (सिर्फ ग्रुप में चलेगा)
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
-    # प्राइवेट चैट में बिल्कुल कोई रिप्लाई नहीं देगा
-    if message.chat.type == "private":
+    if message.chat.type == "private" or not is_chat_allowed(message.chat.id):
         return
 
     bot_username = ""
@@ -331,7 +349,7 @@ if __name__ == "__main__":
     me = bot.get_me()
     print("=" * 50)
     print(f"✅ Bot successfully running as: @{me.username} (Name: {me.first_name})")
-    print(f"🔒 Private Mode: DISABLED (Only works in groups)")
+    print(f"🔒 Group Whitelisting Active: {ALLOWED_GROUP_IDS if ALLOWED_GROUP_IDS else 'All Groups Allowed (Set ALLOWED_GROUP_IDS to lock)'}")
     print(f"🌐 Health server running on port {PORT} for Render 24/7 hosting")
     print("=" * 50)
     bot.infinity_polling(timeout=20, long_polling_timeout=20)
