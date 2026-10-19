@@ -15,7 +15,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ================= 1. CONFIGURATION =================
-# Keys are read safely from Environment Variables (Render Dashboard)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PORT = int(os.environ.get("PORT", "8080"))
@@ -25,7 +24,7 @@ if not TELEGRAM_BOT_TOKEN:
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# Gemini API Models to try in order of preference
+# Gemini Models list with auto-fallback
 GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-3.8-flash"]
 
 # ================= 2. GEMINI REST API CLIENT =================
@@ -37,7 +36,7 @@ def call_gemini(parts, system_instruction=None):
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "maxOutputTokens": 800,
+            "maxOutputTokens": 2000,
             "temperature": 0.7
         }
     }
@@ -58,17 +57,20 @@ def call_gemini(parts, system_instruction=None):
             headers={"Content-Type": "application/json"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=40) as response:
                 result = json.loads(response.read().decode("utf-8"))
                 candidates = result.get("candidates", [])
                 if candidates:
                     parts_out = candidates[0].get("content", {}).get("parts", [])
-                    if parts_out:
-                        return parts_out[0].get("text", "")
-                return "उत्तर प्राप्त नहीं हो सका।"
+                    # Extract text from all parts, ignoring thought signatures
+                    text_parts = [p.get("text", "") for p in parts_out if "text" in p and not p.get("thought", False)]
+                    final_text = "".join(text_parts).strip()
+                    if final_text:
+                        return final_text
+                return "माफ़ कीजिये, इस प्रश्न का उत्तर नहीं मिल पाया।"
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="ignore")
-            logger.warning(f"Model {model_name} returned HTTP {e.code}: {err_body[:120]}")
+            logger.warning(f"Model {model_name} HTTP {e.code}: {err_body[:120]}")
             last_error = f"HTTP {e.code}"
             continue
         except Exception as e:
@@ -81,6 +83,7 @@ def call_gemini(parts, system_instruction=None):
 SYSTEM_PROMPT = (
     "You are an intelligent, friendly AI tutor for students in a Telegram study group. "
     "Provide clear, accurate, step-by-step explanations in simple Hindi / Hinglish. "
+    "Always state the correct answer clearly, give the reason, and explain key points. "
     "Keep answers well-structured with bullet points and easy to read on mobile."
 )
 
@@ -118,13 +121,12 @@ DEFAULT_QUIZZES = [
     },
     {
         "question": "पौधों में प्रकाश संश्लेषण (Photosynthesis) के लिए कौन सी गैस आवश्यक है?",
-        "options": ["ऑक्सीजन (O2)", "नाइटु्रोजन (N2)", "कार्बन डाइऑक्साइड (CO2)", "हीलियम"],
+        "options": ["ऑक्सीजन (O2)", "नाइट्रोजन (N2)", "कार्बन डाइऑक्साइड (CO2)", "हीलियम"],
         "correct_option_id": 2,
         "explanation": "पौधे सूर्य के प्रकाश और CO2 की सहायता से अपना भोजन बनाते हैं।"
     }
 ]
 
-# Load from questions.json if available
 QUIZ_BANK = DEFAULT_QUIZZES
 try:
     q_file = os.path.join(os.path.dirname(__file__), "questions.json")
@@ -161,10 +163,10 @@ def send_welcome(message):
         "✨ *मुख्य फीचर्स:*\n"
         "🔹 `/quiz` - Telegram क्विज़ खेलें (बिल्कुल फ्री, 0 टोकन)\n"
         "🔹 `/ask <सवाल>` - किसी भी विषय पर मुझसे पूछें\n"
-        "🔹 *क्विज़ पर Reply करें* - किसी भी क्विज़ पोल पर रिप्लाई करके डाउट पूछें\n"
+        "🔹 *किसी भी मैसेज/क्विज़ पर Reply करें* - किसी भी सवाल पर रिप्लाई करके `@Aantimpraharr_bot Explain me` लिखें\n"
         "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा\n"
         "🔹 `/help` - सहायता मेनू\n\n"
-        "💡 *ग्रुप में इस्तेमाल:* मुझे ग्रुप में ऐड करें और सवाल पूछने के लिए मुझे टैग करें या रिप्लाई करें।"
+        "💡 *ग्रुप में इस्तेमाल:* सवाल पूछने के लिए मुझे मेंशन करें या रिप्लाई करें।"
     )
     bot.reply_to(message, text, parse_mode="Markdown")
 
@@ -253,24 +255,34 @@ def handle_text(message):
         pass
 
     is_tagged = bot_username and (bot_username.lower() in message.text.lower())
-    is_reply = (message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id)
+    is_reply = bool(message.reply_to_message)
 
-    if is_private or is_tagged or is_reply:
+    if is_private or is_tagged or (is_reply and bot_username.lower() in message.text.lower()):
         clean_text = message.text.replace(bot_username, "").strip()
 
-        # स्मार्ट फीचर: अगर किसी Quiz Poll पर Reply किया गया है
-        if message.reply_to_message and message.reply_to_message.poll:
-            poll = message.reply_to_message.poll
-            opts = ", ".join([opt.text for opt in poll.options])
-            clean_text = (
-                f"छात्र इस क्विज़ प्रश्न पर डाउट पूछ रहा है:\n"
-                f"प्रश्न: {poll.question}\n"
-                f"विकल्प: {opts}\n\n"
-                f"छात्र का सवाल/डाउट: {clean_text if clean_text else 'कृपया इस क्विज़ का सही उत्तर और पूरी व्याख्या विस्तार से समझाएं।'}"
-            )
+        # किसी भी मैसेज या दूसरे बॉट के क्विज़ पर रिप्लाई को हैंडल करना
+        quoted_content = ""
+        if message.reply_to_message:
+            rep = message.reply_to_message
+            if rep.poll:
+                opts = ", ".join([opt.text for opt in rep.poll.options])
+                quoted_content = f"क्विज़ पोल प्रश्न: {rep.poll.question}\nविकल्प: {opts}"
+            elif rep.text:
+                quoted_content = f"प्रश्न / मैसेज: {rep.text}"
+            elif rep.caption:
+                quoted_content = f"प्रश्न कैप्शन: {rep.caption}"
 
-        if clean_text:
-            answer_text_query(message, clean_text)
+        if quoted_content:
+            query = (
+                f"छात्र ने ग्रुप में निम्नलिखित प्रश्न पर रिप्लाई करके डाउट पूछा है:\n\n"
+                f"{quoted_content}\n\n"
+                f"छात्र का सवाल / अनुरोध: {clean_text if clean_text else 'कृपया इस प्रश्न का सही उत्तर, कारण और पूरी व्याख्या आसान हिंदी में समझाएं।'}"
+            )
+        else:
+            query = clean_text
+
+        if query:
+            answer_text_query(message, query)
 
 def answer_text_query(message, query):
     try:
