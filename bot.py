@@ -17,10 +17,15 @@ logger = logging.getLogger(__name__)
 
 # ================= 1. CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 PORT = int(os.environ.get("PORT", "8080"))
 
-# Allowed Group IDs (Render Environment Variables से पढ़ा जाएगा)
+# Multi-Key Rotation: Render Environment Variables से लोड होगी
+RAW_KEYS = os.environ.get("GEMINI_API_KEYS", "") or os.environ.get("GEMINI_API_KEY", "")
+GEMINI_KEYS_LIST = [k.strip() for k in RAW_KEYS.split(",") if k.strip()]
+
+current_key_index = 0
+
+# Allowed Group IDs
 ALLOWED_GROUP_IDS_STR = os.environ.get("ALLOWED_GROUP_IDS", "").strip()
 ALLOWED_GROUP_IDS = [gid.strip() for gid in ALLOWED_GROUP_IDS_STR.split(",") if gid.strip()]
 
@@ -49,17 +54,30 @@ SYSTEM_PROMPT = (
     "5. Use clear, simple Hindi / Hinglish."
 )
 
+AUTO_TRIGGERS = [
+    "explain", "samjhao", "batao", "solution", "solve", "kaise", 
+    "why", "answer", "uttar", "हल", "समझाओ", "बताओ", "स्पष्ट", "details", "?"
+]
+
 def is_chat_allowed(chat_id):
-    """Checks if the message is coming from an authorized group."""
     if not ALLOWED_GROUP_IDS:
-        return True  # अगर कोई ID सेट नहीं है तो डिफ़ॉल्ट रूप से चलेगा
+        return True
     return str(chat_id) in ALLOWED_GROUP_IDS
 
-# ================= 2. GEMINI REST API CLIENT =================
-def call_gemini(parts, system_instruction=None):
-    if not GEMINI_API_KEY:
-        return "⚠️ Gemini API Key कॉन्फ़िगर नहीं है। कृपया Render पर GEMINI_API_KEY जोड़ें।"
+def get_current_api_key():
+    global current_key_index
+    if not GEMINI_KEYS_LIST:
+        return ""
+    return GEMINI_KEYS_LIST[current_key_index % len(GEMINI_KEYS_LIST)]
 
+def rotate_to_next_key():
+    global current_key_index
+    if len(GEMINI_KEYS_LIST) > 1:
+        current_key_index = (current_key_index + 1) % len(GEMINI_KEYS_LIST)
+        logger.info(f"Switched to next API Key (Key #{current_key_index + 1} of {len(GEMINI_KEYS_LIST)})")
+
+# ================= 2. GEMINI REST API CLIENT (AUTO-ROTATION) =================
+def call_gemini(parts, system_instruction=None):
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
@@ -75,38 +93,54 @@ def call_gemini(parts, system_instruction=None):
 
     encoded_data = json.dumps(payload).encode("utf-8")
 
+    total_keys = len(GEMINI_KEYS_LIST)
     last_error = ""
-    for model_name in GEMINI_MODELS:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-        req = urllib.request.Request(
-            url,
-            data=encoded_data,
-            headers={"Content-Type": "application/json"}
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=20) as response:
-                result = json.loads(response.read().decode("utf-8"))
-                candidates = result.get("candidates", [])
-                if candidates:
-                    parts_out = candidates[0].get("content", {}).get("parts", [])
-                    text_parts = [p.get("text", "") for p in parts_out if "text" in p and not p.get("thought", False)]
-                    final_text = "".join(text_parts).strip()
-                    if final_text:
-                        return final_text
-                return "माफ़ कीजिये, इस प्रश्न का उत्तर नहीं मिल पाया।"
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="ignore")
-            logger.warning(f"Model {model_name} HTTP {e.code}: {err_body[:100]}")
-            last_error = f"HTTP {e.code}"
-            if e.code == 503:
-                time.sleep(1)
-            continue
-        except Exception as e:
-            logger.warning(f"Error calling {model_name}: {e}")
-            last_error = str(e)
+
+    for _ in range(total_keys):
+        active_key = get_current_api_key()
+        if not active_key:
+            return "⚠️ कोई Gemini API Key उपलब्ध नहीं है।"
+
+        key_quota_exhausted = False
+
+        for model_name in GEMINI_MODELS:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key}"
+            req = urllib.request.Request(
+                url,
+                data=encoded_data,
+                headers={"Content-Type": "application/json"}
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=20) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                    candidates = result.get("candidates", [])
+                    if candidates:
+                        parts_out = candidates[0].get("content", {}).get("parts", [])
+                        text_parts = [p.get("text", "") for p in parts_out if "text" in p and not p.get("thought", False)]
+                        final_text = "".join(text_parts).strip()
+                        if final_text:
+                            return final_text
+                    return "माफ़ कीजिये, इस प्रश्न का उत्तर नहीं मिल पाया।"
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="ignore")
+                logger.warning(f"Key #{current_key_index + 1} | Model {model_name} HTTP {e.code}: {err_body[:100]}")
+                last_error = f"HTTP {e.code}"
+                if e.code == 429:
+                    key_quota_exhausted = True
+                    break
+                elif e.code == 503:
+                    time.sleep(1)
+                continue
+            except Exception as e:
+                logger.warning(f"Error calling {model_name}: {e}")
+                last_error = str(e)
+                continue
+
+        if key_quota_exhausted and total_keys > 1:
+            rotate_to_next_key()
             continue
 
-    return f"❌ AI सर्वर व्यस्त है ({last_error}), कृपया कुछ सेकंड बाद पुनः प्रयास करें।"
+    return f"❌ AI सर्वर व्यस्त है ({last_error}), कृपया कुछ देर बाद पुनः प्रयास करें।"
 
 # ================= 3. OFFLINE QUIZ BANK =================
 DEFAULT_QUIZZES = [
@@ -157,13 +191,22 @@ try:
 except Exception as e:
     logger.warning(f"Using default quiz bank: {e}")
 
-# ================= 4. RENDER 24/7 WEB SERVER =================
+# ================= 4. RENDER 24/7 WEB SERVER (UPTIME MONITOR FIXED) =================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(b"Telegram AI Study Bot is alive and running on Render!")
+
+    # Uptime Monitor (HEAD requests) के लिए 200 OK सपोर्ट (501 एरर फिक्स)
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+
+    def do_POST(self):
+        self.do_GET()
 
     def log_message(self, format, *args):
         return
@@ -182,7 +225,7 @@ threading.Thread(target=run_health_server, daemon=True).start()
 def send_group_id(message):
     bot.reply_to(message, f"📌 इस चैट का ID है: `{message.chat.id}`", parse_mode="Markdown")
 
-# अनधिकृत ग्रुप में जोड़े जाने पर खुद बाहर निकलना (Auto-Leave)
+# अनधिकृत ग्रुप में जोड़े जाने पर बाहर निकलना
 @bot.message_handler(content_types=['new_chat_members'])
 def on_user_joins(message):
     if any(m.id == bot.get_me().id for m in message.new_chat_members):
@@ -196,7 +239,7 @@ def send_welcome(message):
         bot.reply_to(
             message,
             "🔒 *यह बॉट केवल ग्रुप में कार्य करता है!*\n\n"
-            "निजी चैट (Private Chat) में यह कोई जवाब नहीं देता।",
+            "निजी चैट में यह कोई उत्तर नहीं देता।",
             parse_mode="Markdown"
         )
         return
@@ -206,10 +249,10 @@ def send_welcome(message):
 
     text = (
         "📚 *नमस्ते! मैं आपका AI Study & Quiz Bot हूँ।* 🎓\n\n"
-        "✨ *कमांड्स:*\n"
-        "🔹 `/quiz` - Telegram क्विज़ खेलें (बिल्कुल फ्री, 0 टोकन)\n"
+        "✨ *कमांड्स और फीचर्स:*\n"
+        "🔹 `/quiz` - Telegram क्विज़ खेलें\n"
         "🔹 `/ask <सवाल>` - किसी भी विषय पर मुझसे पूछें\n"
-        "🔹 *क्विज़ पर Reply करें* - किसी भी सवाल पर रिप्लाई करके `@Aantimpraharr_bot Explain me` लिखें\n"
+        "🔹 *क्विज़/सवाल पर Reply करें* - क्विज़ बॉट के सवाल पर रिप्लाई करके सिर्फ `explain` या `समझाओ` लिखें\n"
         "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा\n"
         "🔹 `/id` - ग्रुप की ID देखने के लिए"
     )
@@ -305,10 +348,30 @@ def handle_text(message):
     except Exception:
         pass
 
-    is_tagged = bot_username and (bot_username.lower() in message.text.lower())
+    text_lower = message.text.lower()
+    is_tagged = bot_username and (bot_username.lower() in text_lower)
     is_reply = bool(message.reply_to_message)
 
-    if is_tagged or (is_reply and bot_username.lower() in message.text.lower()):
+    should_respond = False
+    
+    # 1. अगर सीधे बॉट को टैग किया गया है
+    if is_tagged:
+        should_respond = True
+    elif is_reply:
+        rep = message.reply_to_message
+        has_trigger = any(trigger in text_lower for trigger in AUTO_TRIGGERS)
+
+        # A. अगर हमारे बॉट के मैसेज या पोल पर रिप्लाई है
+        if rep.from_user and rep.from_user.id == bot.get_me().id:
+            should_respond = True
+        # B. अगर किसी भी Quiz Poll पर रिप्लाई है
+        elif rep.poll:
+            should_respond = True
+        # C. अगर किसी दूसरे BOT (जैसे MAHIQUIZBOT) के मैसेज पर रिप्लाई करके explain/samjhao लिखा है
+        elif rep.from_user and rep.from_user.is_bot and has_trigger:
+            should_respond = True
+
+    if should_respond:
         clean_text = message.text.replace(bot_username, "").strip()
 
         quoted_content = ""
@@ -349,7 +412,8 @@ if __name__ == "__main__":
     me = bot.get_me()
     print("=" * 50)
     print(f"✅ Bot successfully running as: @{me.username} (Name: {me.first_name})")
-    print(f"🔒 Group Whitelisting Active: {ALLOWED_GROUP_IDS if ALLOWED_GROUP_IDS else 'All Groups Allowed (Set ALLOWED_GROUP_IDS to lock)'}")
+    print(f"🔑 Loaded {len(GEMINI_KEYS_LIST)} Gemini API Key(s) from Environment Variables")
+    print(f"🔒 Group Whitelisting Active: {ALLOWED_GROUP_IDS if ALLOWED_GROUP_IDS else 'All Groups Allowed'}")
     print(f"🌐 Health server running on port {PORT} for Render 24/7 hosting")
     print("=" * 50)
     bot.infinity_polling(timeout=20, long_polling_timeout=20)
