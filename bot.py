@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", "8080"))
 
-# Multi-Key Rotation: Render Environment Variables से लोड होगी
+# Multi-Key Rotation: Render Environment Variables
 RAW_KEYS = os.environ.get("GEMINI_API_KEYS", "") or os.environ.get("GEMINI_API_KEY", "")
 GEMINI_KEYS_LIST = [k.strip() for k in RAW_KEYS.split(",") if k.strip()]
 
@@ -35,7 +35,7 @@ if not TELEGRAM_BOT_TOKEN:
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# ⭐ Bot info एक बार ही लोड करो
+# ⭐ Bot info
 BOT_INFO = None
 BOT_ID = 0
 BOT_USERNAME = ""
@@ -47,7 +47,7 @@ try:
 except Exception as e:
     logger.error(f"Failed to get bot info: {e}")
 
-# Super-fast Lite & Flash models
+# Fast & Reliable Gemini Models
 GEMINI_MODELS = [
     "gemini-3.5-flash-lite",
     "gemini-flash-lite-latest",
@@ -57,7 +57,6 @@ GEMINI_MODELS = [
     "gemini-3.7-flash"
 ]
 
-# ⭐ UPDATED STRICT PROMPT: Independent Fact-Checking + Ultra-Attractive Layout
 SYSTEM_PROMPT = (
     "You are an elite, highly accurate AI Study Tutor and Fact-Checker for competitive exam students (UPSC, SSC, State PSC, NEET, etc.).\n\n"
     "CRITICAL FACT-CHECKING RULE:\n"
@@ -115,13 +114,11 @@ def has_trigger_word(text):
             return True
     return False
 
-# ⭐⭐⭐ MARKDOWN → TELEGRAM HTML CONVERTER ⭐⭐⭐
+# ⭐⭐⭐ HTML SANITIZER & CONVERTER ⭐⭐⭐
 def md_to_html(text):
-    """Convert Gemini's output to robust Telegram-safe HTML"""
     if not text:
         return text
     
-    # Ensure blockquote is wrapped properly if model missed it
     has_blockquote = "<blockquote>" in text.lower()
     
     protected = []
@@ -132,16 +129,15 @@ def md_to_html(text):
     # Protect valid HTML tags
     text = re.sub(r'</?(?:b|i|code|blockquote)>', protect_tag, text, flags=re.IGNORECASE)
     
-    # Escape remaining chars
+    # Escape special chars
     text = text.replace("&", "&amp;")
     text = text.replace("<", "&lt;")
     text = text.replace(">", "&gt;")
     
-    # Restore tags
     for idx, tag in enumerate(protected):
         text = text.replace(f"__PROTECTED_{idx}__", tag)
     
-    # Convert remaining markdown artifacts
+    # Convert markdown tags
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
     text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
@@ -155,7 +151,6 @@ def md_to_html(text):
     return text.strip()
 
 def safe_send_html(chat_id, text, reply_to_message_id=None):
-    """Send message with HTML formatting, fallback to plain text if needed"""
     html_text = md_to_html(text)
     try:
         if reply_to_message_id:
@@ -163,7 +158,7 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
         else:
             bot.send_message(chat_id, html_text, parse_mode="HTML")
     except Exception as e:
-        logger.warning(f"HTML send failed ({e}), sending fallback")
+        logger.warning(f"HTML send failed ({e}), sending fallback text")
         plain = re.sub(r'<[^>]+>', '', html_text)
         if reply_to_message_id:
             bot.send_message(chat_id, plain, reply_to_message_id=reply_to_message_id)
@@ -347,7 +342,7 @@ def send_welcome(message):
         "✨ <b>कमांड्स और फीचर्स:</b>\n"
         "🔹 /quiz — महत्वपूर्ण क्विज़ हल करें\n"
         "🔹 /ask &lt;सवाल&gt; — कोई भी डाउट पूछें\n"
-        "🔹 <b>Reply Feature:</b> किसी भी क्विज़, प्रश्न या फोटो पर स्वाइप करके <code>explain</code>, <code>हल</code>, या <code>?</code> लिखें!\n"
+        "🔹 <b>Reply Feature:</b> किसी भी प्रश्न, फोटो या क्विज़ पर स्वाइप करके सवाल पूछें!\n"
         "🔹 <b>Photo Solver:</b> सवाल की फोटो भेजें, बॉट तुरंत हल देगा 📸\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         "⚡ <i>Fact-checked by Google Gemini AI</i>"
@@ -455,17 +450,7 @@ def handle_text(message):
     if bot_tagged:
         should_respond = True
     elif has_reply:
-        rep = message.reply_to_message
-        if rep.from_user and rep.from_user.id == BOT_ID:
-            should_respond = True
-        elif rep.poll or rep.message_id in POLL_TRACKER:
-            should_respond = True
-        elif rep.from_user and rep.from_user.is_bot and has_trigger:
-            should_respond = True
-        elif rep.photo and (has_trigger or bot_tagged):
-            should_respond = True
-        elif has_trigger:
-            should_respond = True
+        should_respond = True
 
     if not should_respond:
         return
@@ -476,7 +461,7 @@ def handle_text(message):
     
     rep = message.reply_to_message
 
-    # ⭐ PHOTO REPLY
+    # ⭐ CASE 1: PHOTO REPLY
     if rep and rep.photo:
         status = bot.reply_to(message, "🔍 <i>फोटो का प्रामाणिक विश्लेषण किया जा रहा है...</i>", parse_mode="HTML")
         try:
@@ -510,7 +495,7 @@ def handle_text(message):
                 pass
         return
 
-    # ⭐ QUIZ POLL / TEXT REPLY
+    # ⭐ CASE 2: QUIZ POLL / TEXT REPLY
     quoted_content = ""
     if rep:
         if rep.poll:
@@ -525,7 +510,28 @@ def handle_text(message):
         elif rep.caption:
             quoted_content = f"प्रश्न कैप्शन: {rep.caption}"
 
-    if quoted_content:
+    # ⭐ AGAR TELEGRAM NE REPLY CONTENT BLANK DIYA HAI (e.g. Third-party Quiz Bots)
+    if rep and not quoted_content:
+        simple_triggers = ["explain", "samjhao", "batao", "solution", "solve", "?", "हल", "समझाओ", "बताओ"]
+        is_only_trigger = clean_text.lower().strip() in simple_triggers or len(clean_text) <= 2
+        
+        if is_only_trigger:
+            guide_msg = (
+                "<blockquote>"
+                "ℹ️ <b>क्विज़ डाउट गाइड:</b>\n"
+                "━━━━━━━━━━━━━━━━━━━\n"
+                "Telegram इस पोल का प्रश्न फॉरवर्ड नहीं कर रहा है।\n\n"
+                "💡 <b>समाधान:</b>\n"
+                "1. स्वाइप करके प्रश्न का 1-2 मुख्य शब्द लिखें:\n"
+                "   👉 <i>उदा: explain राइबोसोम?</i>\n"
+                "2. या क्विज़ का <b>स्क्रीनशॉट / फोटो</b> भेजें!"
+                "</blockquote>"
+            )
+            bot.reply_to(message, guide_msg, parse_mode="HTML")
+            return
+        else:
+            query = clean_text
+    elif quoted_content:
         query = (
             f"छात्र ने निम्नलिखित प्रश्न पर सहायता मांगी है। कृपया तथ्यों की स्वयं गहन जांच करें और सही उत्तर बताएं (क्विज़ के विकल्पों पर आंख मूंदकर भरोसा न करें):\n\n"
             f"{quoted_content}\n\n"
