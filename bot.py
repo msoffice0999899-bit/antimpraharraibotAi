@@ -35,7 +35,7 @@ if not TELEGRAM_BOT_TOKEN:
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# ⭐ Bot info एक बार ही लोड करो (हर बार get_me नहीं करना पड़ेगा)
+# ⭐ Bot info एक बार ही लोड करो
 BOT_INFO = None
 BOT_ID = 0
 BOT_USERNAME = ""
@@ -57,27 +57,23 @@ GEMINI_MODELS = [
     "gemini-3.7-flash"
 ]
 
+# ⭐ UPDATED STRICT PROMPT: Independent Fact-Checking + Ultra-Attractive Layout
 SYSTEM_PROMPT = (
-    "You are a smart, concise AI study tutor for a Telegram student group. "
-    "Your answers will be sent via Telegram HTML formatting.\n\n"
-    "STRICT FORMAT RULES:\n"
-    "1. First line: ✅ <b>सही उत्तर:</b> [answer] — always bold the label.\n"
-    "2. Then a blank line, then 📝 <b>व्याख्या:</b> as a heading.\n"
-    "3. Use 3-4 bullet points with • symbol. Bold key terms with <b>term</b> tags.\n"
-    "4. Use <i>italic</i> for English scientific terms.\n"
-    "5. End with a 💡 <b>याद रखें:</b> one-liner tip.\n"
-    "6. Keep total answer SHORT (max 5-6 lines). No long paragraphs.\n"
-    "7. Use simple Hindi / Hinglish.\n"
-    "8. ONLY use these HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>. "
-    "Do NOT use markdown ** or __ syntax. Do NOT use <br> tags. Use \\n for new lines.\n"
-    "9. Do NOT use any other HTML tags like <ul>, <li>, <p>, <h1> etc.\n\n"
-    "EXAMPLE FORMAT:\n"
-    "✅ <b>सही उत्तर:</b> B) यकृत (Liver)\n\n"
-    "📝 <b>व्याख्या:</b>\n"
-    "• यकृत (<i>Liver</i>) मानव शरीर की <b>सबसे बड़ी ग्रंथि</b> है\n"
-    "• इसका वजन लगभग <b>1.5 kg</b> होता है\n"
-    "• यह <b>पित्त रस</b> (<i>Bile Juice</i>) का निर्माण करती है\n\n"
-    "💡 <b>याद रखें:</b> सबसे बड़ी ग्रंथि = यकृत, सबसे छोटी ग्रंथि = पीयूष"
+    "You are an elite, highly accurate AI Study Tutor and Fact-Checker for competitive exam students (UPSC, SSC, State PSC, NEET, etc.).\n\n"
+    "CRITICAL FACT-CHECKING RULE:\n"
+    "- DO NOT blindly trust the answer marked in the quiz poll or by the user!\n"
+    "- Always verify from authentic standard textbooks (NCERT, authentic history/science/polity facts).\n"
+    "- If the quiz's marked answer is WRONG, boldly clarify: '⚠️ क्विज़ में विकल्प X मार्क है, परंतु मानक तथ्यों के अनुसार वास्तविक सही उत्तर Y है।'\n\n"
+    "FORMATTING & DESIGN RULES (Telegram HTML):\n"
+    "- Wrap the entire response inside <blockquote>...</blockquote> tags for a sleek card design.\n"
+    "- Header: 🎯 <b>STUDY CAPSULE | अंतिम प्रहार™</b>\\n━━━━━━━━━━━━━━━━━━━\\n\n"
+    "- First line: ✅ <b>प्रामाणिक सही उत्तर:</b> <code>[Actual Correct Answer]</code>\n"
+    "- Next line: 📌 <b>मुख्य बिंदु व स्पष्टीकरण:</b>\n"
+    "- Use 3-4 bullet points starting with 🔹. Bold key keywords using <b>...</b>.\n"
+    "- Use <i>italic</i> for English technical/scientific terms.\n"
+    "- End with: ━━━━━━━━━━━━━━━━━━━\\n💡 <b>याद रखने योग्य ट्रिक/तथ्य:</b> <i>[One-line powerful revision tip]</i>\n\n"
+    "- Keep it SHORT, CRISP, NO long paragraphs.\n"
+    "- Only use valid Telegram HTML: <blockquote>, <b>, <i>, <code>. Do NOT use markdown (** or __). Do NOT use <br> tags."
 )
 
 AUTO_TRIGGERS = [
@@ -106,13 +102,11 @@ def rotate_to_next_key():
         logger.info(f"Switched to next API Key (Key #{current_key_index + 1} of {len(GEMINI_KEYS_LIST)})")
 
 def is_tagged(text):
-    """Check if bot is tagged in the text"""
     if not BOT_USERNAME or not text:
         return False
     return BOT_USERNAME in text.lower()
 
 def has_trigger_word(text):
-    """Check if text contains any trigger word"""
     if not text:
         return False
     text_lower = text.lower().strip()
@@ -123,48 +117,45 @@ def has_trigger_word(text):
 
 # ⭐⭐⭐ MARKDOWN → TELEGRAM HTML CONVERTER ⭐⭐⭐
 def md_to_html(text):
-    """Convert Gemini's markdown output to Telegram-safe HTML"""
+    """Convert Gemini's output to robust Telegram-safe HTML"""
     if not text:
         return text
     
-    # Step 1: Escape bare HTML special chars that aren't part of our allowed tags
+    # Ensure blockquote is wrapped properly if model missed it
+    has_blockquote = "<blockquote>" in text.lower()
+    
     protected = []
     def protect_tag(match):
         protected.append(match.group(0))
         return f"__PROTECTED_{len(protected)-1}__"
     
-    # Protect existing valid HTML tags: <b>, </b>, <i>, </i>, <code>, </code>
-    text = re.sub(r'</?(?:b|i|code)>', protect_tag, text)
+    # Protect valid HTML tags
+    text = re.sub(r'</?(?:b|i|code|blockquote)>', protect_tag, text, flags=re.IGNORECASE)
     
-    # Escape remaining < and > and &
+    # Escape remaining chars
     text = text.replace("&", "&amp;")
     text = text.replace("<", "&lt;")
     text = text.replace(">", "&gt;")
     
-    # Restore protected tags
+    # Restore tags
     for idx, tag in enumerate(protected):
         text = text.replace(f"__PROTECTED_{idx}__", tag)
     
-    # Step 2: Convert markdown bold **text** → <b>text</b>
+    # Convert remaining markdown artifacts
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
-    
-    # Step 3: Convert markdown italic *text* → <i>text</i>
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
-    
-    # Step 4: Convert markdown `code` → <code>code</code>
     text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
-    
-    # Step 5: Convert markdown headers ### text → bold text
     text = re.sub(r'^#{1,3}\s*(.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
-    
-    # Step 6: Convert - bullet to • bullet
-    text = re.sub(r'^[\-]\s+', '• ', text, flags=re.MULTILINE)
-    text = re.sub(r'^\*\s+', '• ', text, flags=re.MULTILINE)
+    text = re.sub(r'^[\-]\s+', '🔹 ', text, flags=re.MULTILINE)
+    text = re.sub(r'^\*\s+', '🔹 ', text, flags=re.MULTILINE)
+
+    if not has_blockquote:
+        text = f"<blockquote>{text.strip()}</blockquote>"
     
     return text.strip()
 
 def safe_send_html(chat_id, text, reply_to_message_id=None):
-    """Send message with HTML formatting, fallback to plain text if HTML fails"""
+    """Send message with HTML formatting, fallback to plain text if needed"""
     html_text = md_to_html(text)
     try:
         if reply_to_message_id:
@@ -172,7 +163,7 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
         else:
             bot.send_message(chat_id, html_text, parse_mode="HTML")
     except Exception as e:
-        logger.warning(f"HTML send failed ({e}), sending as plain text")
+        logger.warning(f"HTML send failed ({e}), sending fallback")
         plain = re.sub(r'<[^>]+>', '', html_text)
         if reply_to_message_id:
             bot.send_message(chat_id, plain, reply_to_message_id=reply_to_message_id)
@@ -184,8 +175,8 @@ def call_gemini(parts, system_instruction=None):
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "maxOutputTokens": 450,
-            "temperature": 0.4
+            "maxOutputTokens": 600,
+            "temperature": 0.2
         }
     }
 
@@ -195,7 +186,6 @@ def call_gemini(parts, system_instruction=None):
         }
 
     encoded_data = json.dumps(payload).encode("utf-8")
-
     total_keys = len(GEMINI_KEYS_LIST)
     last_error = ""
 
@@ -294,8 +284,8 @@ try:
 except Exception as e:
     logger.warning(f"Using default quiz bank: {e}")
 
-# ⭐ Quiz Poll Tracking
-POLL_TRACKER = {}   # message_id -> quiz dict
+# Quiz Poll Tracking
+POLL_TRACKER = {}
 
 # ================= 4. RENDER 24/7 WEB SERVER =================
 class HealthHandler(BaseHTTPRequestHandler):
@@ -351,16 +341,17 @@ def send_welcome(message):
         return
 
     text = (
-        "📚 <b>नमस्ते! मैं आपका AI Study &amp; Quiz Bot हूँ।</b> 🎓\n\n"
-        "✨ <b>कमांड्स और फीचर्स:</b>\n"
-        "🔹 /quiz — Telegram क्विज़ खेलें\n"
-        "🔹 /ask &lt;सवाल&gt; — किसी भी विषय पर मुझसे पूछें\n"
-        "🔹 <b>किसी भी मैसेज/क्विज़/फोटो पर Reply करें</b> और <code>explain</code> / <code>समझाओ</code> / <code>?</code> लिखें — बॉट बिना टैग जवाब देगा!\n"
-        "🔹 <b>बॉट को टैग करें</b> — कहीं भी " + BOT_USERNAME + " लिखकर सवाल पूछें\n"
-        "🔹 <b>फोटो डाउट सॉल्विंग</b> — किताब या प्रश्न की फोटो भेजें 📸\n"
-        "🔹 /id — ग्रुप की ID देखने के लिए\n\n"
+        "<blockquote>"
+        "📚 <b>अंतिम प्रहार™ AI Study Assistant</b> 🎓\n"
         "━━━━━━━━━━━━━━━━━━━\n"
-        "🤖 <i>Powered by Gemini AI</i> ⚡"
+        "✨ <b>कमांड्स और फीचर्स:</b>\n"
+        "🔹 /quiz — महत्वपूर्ण क्विज़ हल करें\n"
+        "🔹 /ask &lt;सवाल&gt; — कोई भी डाउट पूछें\n"
+        "🔹 <b>Reply Feature:</b> किसी भी क्विज़, प्रश्न या फोटो पर स्वाइप करके <code>explain</code>, <code>हल</code>, या <code>?</code> लिखें!\n"
+        "🔹 <b>Photo Solver:</b> सवाल की फोटो भेजें, बॉट तुरंत हल देगा 📸\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ <i>Fact-checked by Google Gemini AI</i>"
+        "</blockquote>"
     )
     bot.reply_to(message, text, parse_mode="HTML")
 
@@ -398,7 +389,7 @@ def handle_ask(message):
     query = parts[1].strip()
     answer_text_query(message, query)
 
-# सीधे फोटो भेजने पर हैंडल करना (Direct Photo)
+# सीधे फोटो भेजने पर (Direct Photo)
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     if message.chat.type == "private" or not is_chat_allowed(message.chat.id):
@@ -414,7 +405,7 @@ def handle_photo(message):
     if not (is_bot_tagged or is_reply_to_bot or caption.lower().startswith("/ask")):
         return
 
-    status = bot.reply_to(message, "🔍 <i>फोटो देखी जा रही है...</i>", parse_mode="HTML")
+    status = bot.reply_to(message, "🔍 <i>फोटो का प्रामाणिक विश्लेषण किया जा रहा है...</i>", parse_mode="HTML")
     try:
         bot.send_chat_action(message.chat.id, "typing")
         
@@ -424,7 +415,7 @@ def handle_photo(message):
 
         prompt = caption.replace(BOT_USERNAME, "").replace("/ask", "").strip()
         if not prompt:
-            prompt = "इस फोटो में दिए गए प्रश्न को पहचानें और छात्र के लिए 3-4 बुलेट पॉइंट्स में संक्षेप में हल समझाएं।"
+            prompt = "इस फोटो में दिए गए प्रश्न की गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
 
         gemini_parts = [
             {"text": prompt},
@@ -463,34 +454,18 @@ def handle_text(message):
     
     if bot_tagged:
         should_respond = True
-        logger.info(f"Responding: bot tagged by {message.from_user.first_name}")
-
     elif has_reply:
         rep = message.reply_to_message
-        
         if rep.from_user and rep.from_user.id == BOT_ID:
             should_respond = True
-            logger.info("Responding: reply to bot's own message")
-        
-        elif rep.poll:
+        elif rep.poll or rep.message_id in POLL_TRACKER:
             should_respond = True
-            logger.info("Responding: reply to poll (poll data available)")
-        
-        elif rep.message_id in POLL_TRACKER:
-            should_respond = True
-            logger.info(f"Responding: reply to tracked quiz poll (msg_id={rep.message_id})")
-        
         elif rep.from_user and rep.from_user.is_bot and has_trigger:
             should_respond = True
-            logger.info("Responding: reply to bot message with trigger")
-        
         elif rep.photo and (has_trigger or bot_tagged):
             should_respond = True
-            logger.info("Responding: reply to photo with trigger")
-        
         elif has_trigger:
             should_respond = True
-            logger.info("Responding: reply to any message with trigger word")
 
     if not should_respond:
         return
@@ -503,14 +478,14 @@ def handle_text(message):
 
     # ⭐ PHOTO REPLY
     if rep and rep.photo:
-        status = bot.reply_to(message, "🔍 <i>फोटो देखी जा रही है...</i>", parse_mode="HTML")
+        status = bot.reply_to(message, "🔍 <i>फोटो का प्रामाणिक विश्लेषण किया जा रहा है...</i>", parse_mode="HTML")
         try:
             bot.send_chat_action(message.chat.id, "typing")
             file_info = bot.get_file(rep.photo[-1].file_id)
             downloaded = bot.download_file(file_info.file_path)
             base64_img = base64.b64encode(downloaded).decode("utf-8")
 
-            user_query = clean_text if clean_text else "इस फोटो में दिए गए प्रश्न को पहचानें और छात्र के लिए 3-4 बुलेट पॉइंट्स में संक्षेप में हल समझाएं।"
+            user_query = clean_text if clean_text else "इस फोटो में दिए गए प्रश्न की गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
             if rep.caption:
                 user_query = f"फोटो कैप्शन: {rep.caption}\nछात्र का सवाल: {user_query}"
 
@@ -540,25 +515,11 @@ def handle_text(message):
     if rep:
         if rep.poll:
             opts = ", ".join([opt.text for opt in rep.poll.options])
-            correct_idx = getattr(rep.poll, 'correct_option_id', None)
-            correct_ans = ""
-            if correct_idx is not None and correct_idx < len(rep.poll.options):
-                correct_ans = rep.poll.options[correct_idx].text
-            quoted_content = f"क्विज़ पोल प्रश्न: {rep.poll.question}\nविकल्प: {opts}"
-            if correct_ans:
-                quoted_content += f"\nसही उत्तर: {correct_ans}"
-            expl = getattr(rep.poll, 'explanation', None)
-            if expl:
-                quoted_content += f"\nव्याख्या: {expl}"
-        
+            quoted_content = f"क्विज़ पोल प्रश्न: {rep.poll.question}\nदिए गए विकल्प: {opts}"
         elif rep.message_id in POLL_TRACKER:
             q_data = POLL_TRACKER[rep.message_id]
             opts = ", ".join(q_data["options"])
-            correct_ans = q_data["options"][q_data["correct_option_id"]]
-            quoted_content = f"क्विज़ पोल प्रश्न: {q_data['question']}\nविकल्प: {opts}\nसही उत्तर: {correct_ans}"
-            if q_data.get("explanation"):
-                quoted_content += f"\nव्याख्या: {q_data['explanation']}"
-        
+            quoted_content = f"क्विज़ पोल प्रश्न: {q_data['question']}\nदिए गए विकल्प: {opts}"
         elif rep.text:
             quoted_content = f"प्रश्न / मैसेज: {rep.text}"
         elif rep.caption:
@@ -566,9 +527,9 @@ def handle_text(message):
 
     if quoted_content:
         query = (
-            f"छात्र ने ग्रुप में निम्नलिखित प्रश्न पर संक्षेप में उत्तर माँगा है:\n\n"
+            f"छात्र ने निम्नलिखित प्रश्न पर सहायता मांगी है। कृपया तथ्यों की स्वयं गहन जांच करें और सही उत्तर बताएं (क्विज़ के विकल्पों पर आंख मूंदकर भरोसा न करें):\n\n"
             f"{quoted_content}\n\n"
-            f"छात्र का सवाल / अनुरोध: {clean_text if clean_text else 'कृपया सिर्फ सही उत्तर और 3-4 मुख्य बिंदु संक्षेप में बताएं।'}"
+            f"छात्र का विशेष अनुरोध: {clean_text if clean_text else 'कृपया प्रामाणिक सही उत्तर और मुख्य बिंदु बताएं।'}"
         )
     else:
         query = clean_text
