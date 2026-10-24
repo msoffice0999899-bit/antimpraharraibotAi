@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import json
 import time
 import base64
@@ -58,19 +59,32 @@ GEMINI_MODELS = [
 
 SYSTEM_PROMPT = (
     "You are a smart, concise AI study tutor for a Telegram student group. "
-    "Rules for answers:\n"
-    "1. Keep answers SHORT, CRISP, and TO-THE-POINT (maximum 4 to 6 bullet points).\n"
-    "2. State the direct answer in the very first line with a checkmark (e.g. '✅ सही उत्तर: ...').\n"
-    "3. Give 3-4 bullet points explaining the reason and key facts.\n"
-    "4. Do NOT write long paragraphs, introductions, or repetitive conclusions.\n"
-    "5. Use clear, simple Hindi / Hinglish."
+    "Your answers will be sent via Telegram HTML formatting.\n\n"
+    "STRICT FORMAT RULES:\n"
+    "1. First line: ✅ <b>सही उत्तर:</b> [answer] — always bold the label.\n"
+    "2. Then a blank line, then 📝 <b>व्याख्या:</b> as a heading.\n"
+    "3. Use 3-4 bullet points with • symbol. Bold key terms with <b>term</b> tags.\n"
+    "4. Use <i>italic</i> for English scientific terms.\n"
+    "5. End with a 💡 <b>याद रखें:</b> one-liner tip.\n"
+    "6. Keep total answer SHORT (max 5-6 lines). No long paragraphs.\n"
+    "7. Use simple Hindi / Hinglish.\n"
+    "8. ONLY use these HTML tags: <b>bold</b>, <i>italic</i>, <code>code</code>. "
+    "Do NOT use markdown ** or __ syntax. Do NOT use <br> tags. Use \\n for new lines.\n"
+    "9. Do NOT use any other HTML tags like <ul>, <li>, <p>, <h1> etc.\n\n"
+    "EXAMPLE FORMAT:\n"
+    "✅ <b>सही उत्तर:</b> B) यकृत (Liver)\n\n"
+    "📝 <b>व्याख्या:</b>\n"
+    "• यकृत (<i>Liver</i>) मानव शरीर की <b>सबसे बड़ी ग्रंथि</b> है\n"
+    "• इसका वजन लगभग <b>1.5 kg</b> होता है\n"
+    "• यह <b>पित्त रस</b> (<i>Bile Juice</i>) का निर्माण करती है\n\n"
+    "💡 <b>याद रखें:</b> सबसे बड़ी ग्रंथि = यकृत, सबसे छोटी ग्रंथि = पीयूष"
 )
 
 AUTO_TRIGGERS = [
     "explain", "samjhao", "batao", "solution", "solve", "kaise", 
     "why", "answer", "uttar", "हल", "समझाओ", "बताओ", "स्पष्ट", "details", "?",
     "kya", "kyu", "kyun", "kyon", "kon", "kaun", "kab", "kaha",
-    "bta", "btao", "smjhao", "smjha", "explain", "hint", "help",
+    "bta", "btao", "smjhao", "smjha", "hint", "help",
     "क्यों", "क्या", "कौन", "कब", "कैसे", "कहाँ", "सही", "गलत"
 ]
 
@@ -106,6 +120,64 @@ def has_trigger_word(text):
         if trigger in text_lower:
             return True
     return False
+
+# ⭐⭐⭐ MARKDOWN → TELEGRAM HTML CONVERTER ⭐⭐⭐
+def md_to_html(text):
+    """Convert Gemini's markdown output to Telegram-safe HTML"""
+    if not text:
+        return text
+    
+    # Step 1: Escape bare HTML special chars that aren't part of our allowed tags
+    protected = []
+    def protect_tag(match):
+        protected.append(match.group(0))
+        return f"__PROTECTED_{len(protected)-1}__"
+    
+    # Protect existing valid HTML tags: <b>, </b>, <i>, </i>, <code>, </code>
+    text = re.sub(r'</?(?:b|i|code)>', protect_tag, text)
+    
+    # Escape remaining < and > and &
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    
+    # Restore protected tags
+    for idx, tag in enumerate(protected):
+        text = text.replace(f"__PROTECTED_{idx}__", tag)
+    
+    # Step 2: Convert markdown bold **text** → <b>text</b>
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    
+    # Step 3: Convert markdown italic *text* → <i>text</i>
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
+    
+    # Step 4: Convert markdown `code` → <code>code</code>
+    text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
+    
+    # Step 5: Convert markdown headers ### text → bold text
+    text = re.sub(r'^#{1,3}\s*(.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
+    
+    # Step 6: Convert - bullet to • bullet
+    text = re.sub(r'^[\-]\s+', '• ', text, flags=re.MULTILINE)
+    text = re.sub(r'^\*\s+', '• ', text, flags=re.MULTILINE)
+    
+    return text.strip()
+
+def safe_send_html(chat_id, text, reply_to_message_id=None):
+    """Send message with HTML formatting, fallback to plain text if HTML fails"""
+    html_text = md_to_html(text)
+    try:
+        if reply_to_message_id:
+            bot.send_message(chat_id, html_text, parse_mode="HTML", reply_to_message_id=reply_to_message_id)
+        else:
+            bot.send_message(chat_id, html_text, parse_mode="HTML")
+    except Exception as e:
+        logger.warning(f"HTML send failed ({e}), sending as plain text")
+        plain = re.sub(r'<[^>]+>', '', html_text)
+        if reply_to_message_id:
+            bot.send_message(chat_id, plain, reply_to_message_id=reply_to_message_id)
+        else:
+            bot.send_message(chat_id, plain)
 
 # ================= 2. GEMINI REST API CLIENT =================
 def call_gemini(parts, system_instruction=None):
@@ -222,8 +294,7 @@ try:
 except Exception as e:
     logger.warning(f"Using default quiz bank: {e}")
 
-# ⭐ Quiz Poll Tracking: जब भी बॉट quiz भेजता है, उसका message_id और data save करो
-# ताकि reply करने पर poll data available हो
+# ⭐ Quiz Poll Tracking
 POLL_TRACKER = {}   # message_id -> quiz dict
 
 # ================= 4. RENDER 24/7 WEB SERVER =================
@@ -256,7 +327,7 @@ threading.Thread(target=run_health_server, daemon=True).start()
 
 @bot.message_handler(commands=['id', 'groupid'])
 def send_group_id(message):
-    bot.reply_to(message, f"📌 इस चैट का ID है: `{message.chat.id}`", parse_mode="Markdown")
+    bot.reply_to(message, f"📌 इस चैट का ID है: <code>{message.chat.id}</code>", parse_mode="HTML")
 
 @bot.message_handler(content_types=['new_chat_members'])
 def on_user_joins(message):
@@ -270,9 +341,9 @@ def send_welcome(message):
     if message.chat.type == "private":
         bot.reply_to(
             message,
-            "🔒 *यह बॉट केवल ग्रुप में कार्य करता है!*\n\n"
+            "🔒 <b>यह बॉट केवल ग्रुप में कार्य करता है!</b>\n\n"
             "निजी चैट में यह कोई उत्तर नहीं देता।",
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
         return
 
@@ -280,16 +351,18 @@ def send_welcome(message):
         return
 
     text = (
-        "📚 *नमस्ते! मैं आपका AI Study & Quiz Bot हूँ।* 🎓\n\n"
-        "✨ *कमांड्स और फीचर्स:*\n"
-        "🔹 `/quiz` - Telegram क्विज़ खेलें\n"
-        "🔹 `/ask <सवाल>` - किसी भी विषय पर मुझसे पूछें\n"
-        "🔹 *किसी भी मैसेज/क्विज़/फोटो पर Reply करें* और `explain` / `समझाओ` / `?` लिखें — बॉट बिना टैग जवाब देगा!\n"
-        "🔹 *बॉट को टैग करें* - कहीं भी `" + BOT_USERNAME + "` लिखकर सवाल पूछें\n"
-        "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें\n"
-        "🔹 `/id` - ग्रुप की ID देखने के लिए"
+        "📚 <b>नमस्ते! मैं आपका AI Study &amp; Quiz Bot हूँ।</b> 🎓\n\n"
+        "✨ <b>कमांड्स और फीचर्स:</b>\n"
+        "🔹 /quiz — Telegram क्विज़ खेलें\n"
+        "🔹 /ask &lt;सवाल&gt; — किसी भी विषय पर मुझसे पूछें\n"
+        "🔹 <b>किसी भी मैसेज/क्विज़/फोटो पर Reply करें</b> और <code>explain</code> / <code>समझाओ</code> / <code>?</code> लिखें — बॉट बिना टैग जवाब देगा!\n"
+        "🔹 <b>बॉट को टैग करें</b> — कहीं भी " + BOT_USERNAME + " लिखकर सवाल पूछें\n"
+        "🔹 <b>फोटो डाउट सॉल्विंग</b> — किताब या प्रश्न की फोटो भेजें 📸\n"
+        "🔹 /id — ग्रुप की ID देखने के लिए\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "🤖 <i>Powered by Gemini AI</i> ⚡"
     )
-    bot.reply_to(message, text, parse_mode="Markdown")
+    bot.reply_to(message, text, parse_mode="HTML")
 
 @bot.message_handler(commands=['quiz'])
 def send_quiz(message):
@@ -307,7 +380,6 @@ def send_quiz(message):
             explanation=q.get("explanation", ""),
             is_anonymous=False
         )
-        # ⭐ Track this poll message so replies to it can access the quiz data
         POLL_TRACKER[sent.message_id] = q
         logger.info(f"Quiz sent and tracked: msg_id={sent.message_id}")
     except Exception as e:
@@ -321,7 +393,7 @@ def handle_ask(message):
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(message, "कृपया सवाल भी लिखें। उदाहरण:\n`/ask प्रकाश वर्ष क्या है?`", parse_mode="Markdown")
+        bot.reply_to(message, "कृपया सवाल भी लिखें। उदाहरण:\n<code>/ask प्रकाश वर्ष क्या है?</code>", parse_mode="HTML")
         return
     query = parts[1].strip()
     answer_text_query(message, query)
@@ -342,7 +414,7 @@ def handle_photo(message):
     if not (is_bot_tagged or is_reply_to_bot or caption.lower().startswith("/ask")):
         return
 
-    status = bot.reply_to(message, "🔍 फोटो देखी जा रही है...")
+    status = bot.reply_to(message, "🔍 <i>फोटो देखी जा रही है...</i>", parse_mode="HTML")
     try:
         bot.send_chat_action(message.chat.id, "typing")
         
@@ -366,7 +438,7 @@ def handle_photo(message):
 
         answer = call_gemini(gemini_parts, SYSTEM_PROMPT)
         bot.delete_message(message.chat.id, status.message_id)
-        bot.reply_to(message, answer)
+        safe_send_html(message.chat.id, answer, reply_to_message_id=message.message_id)
     except Exception as e:
         logger.error(f"Photo handling error: {e}")
         try:
@@ -374,7 +446,7 @@ def handle_photo(message):
         except:
             pass
 
-# ⭐⭐⭐ MAIN TEXT HANDLER: सभी text messages, replies, quiz poll replies ⭐⭐⭐
+# ⭐⭐⭐ MAIN TEXT HANDLER ⭐⭐⭐
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     if message.chat.type == "private" or not is_chat_allowed(message.chat.id):
@@ -389,68 +461,49 @@ def handle_text(message):
 
     should_respond = False
     
-    # ──────────────────────────────────────────────────────
-    # CASE 1: बॉट को टैग किया गया है → हमेशा जवाब दो
-    # ──────────────────────────────────────────────────────
     if bot_tagged:
         should_respond = True
         logger.info(f"Responding: bot tagged by {message.from_user.first_name}")
 
-    # ──────────────────────────────────────────────────────
-    # CASE 2: किसी मैसेज पर Reply किया गया है
-    # ──────────────────────────────────────────────────────
     elif has_reply:
         rep = message.reply_to_message
         
-        # A. अगर बॉट के खुद के मैसेज पर Reply है → हमेशा जवाब दो (बिना trigger)
         if rep.from_user and rep.from_user.id == BOT_ID:
             should_respond = True
             logger.info("Responding: reply to bot's own message")
         
-        # B. ⭐ अगर POLL/QUIZ पर Reply है (Telegram poll data reply मैसेज में नहीं भेजता,
-        #    इसलिए हम forward_origin / poll दोनों चेक करते हैं + POLL_TRACKER से data लेते हैं)
         elif rep.poll:
             should_respond = True
             logger.info("Responding: reply to poll (poll data available)")
         
-        # C. ⭐ अगर reply_to_message में poll नहीं आया लेकिन POLL_TRACKER में है
         elif rep.message_id in POLL_TRACKER:
             should_respond = True
             logger.info(f"Responding: reply to tracked quiz poll (msg_id={rep.message_id})")
         
-        # D. ⭐ अगर किसी BOT के मैसेज पर Reply + trigger word है
         elif rep.from_user and rep.from_user.is_bot and has_trigger:
             should_respond = True
-            logger.info(f"Responding: reply to bot message with trigger")
+            logger.info("Responding: reply to bot message with trigger")
         
-        # E. ⭐ अगर किसी PHOTO पर Reply + trigger word / tag है
         elif rep.photo and (has_trigger or bot_tagged):
             should_respond = True
             logger.info("Responding: reply to photo with trigger")
         
-        # F. ⭐⭐ NEW: अगर किसी भी मैसेज पर Reply + trigger word है
-        #    (Human message भी — जैसे किसी ने question लिखा और दूसरे ने "explain" reply किया)
         elif has_trigger:
             should_respond = True
             logger.info("Responding: reply to any message with trigger word")
 
-    # अगर respond नहीं करना तो return
     if not should_respond:
         return
     
-    # ──────────────────────────────────────────────────────
-    # जवाब देने की तैयारी
-    # ──────────────────────────────────────────────────────
     clean_text = text.replace(BOT_USERNAME, "").replace(BOT_USERNAME.replace("@", ""), "").strip()
-    # Also remove @tag with different case
     if BOT_INFO:
         clean_text = clean_text.replace(f"@{BOT_INFO.username}", "").strip()
     
     rep = message.reply_to_message
 
-    # ⭐ PHOTO REPLY: अगर reply किया गया मैसेज एक PHOTO है
+    # ⭐ PHOTO REPLY
     if rep and rep.photo:
-        status = bot.reply_to(message, "🔍 फोटो देखी जा रही है...")
+        status = bot.reply_to(message, "🔍 <i>फोटो देखी जा रही है...</i>", parse_mode="HTML")
         try:
             bot.send_chat_action(message.chat.id, "typing")
             file_info = bot.get_file(rep.photo[-1].file_id)
@@ -473,7 +526,7 @@ def handle_text(message):
 
             answer = call_gemini(gemini_parts, SYSTEM_PROMPT)
             bot.delete_message(message.chat.id, status.message_id)
-            bot.reply_to(message, answer)
+            safe_send_html(message.chat.id, answer, reply_to_message_id=message.message_id)
         except Exception as e:
             logger.error(f"Replied photo error: {e}")
             try:
@@ -482,10 +535,9 @@ def handle_text(message):
                 pass
         return
 
-    # ⭐ QUIZ POLL REPLY: quiz poll ka data nikalo
+    # ⭐ QUIZ POLL / TEXT REPLY
     quoted_content = ""
     if rep:
-        # Method 1: Telegram ne poll data diya (rep.poll)
         if rep.poll:
             opts = ", ".join([opt.text for opt in rep.poll.options])
             correct_idx = getattr(rep.poll, 'correct_option_id', None)
@@ -499,7 +551,6 @@ def handle_text(message):
             if expl:
                 quoted_content += f"\nव्याख्या: {expl}"
         
-        # Method 2: POLL_TRACKER से data (जब poll data reply में नहीं आता)
         elif rep.message_id in POLL_TRACKER:
             q_data = POLL_TRACKER[rep.message_id]
             opts = ", ".join(q_data["options"])
@@ -508,7 +559,6 @@ def handle_text(message):
             if q_data.get("explanation"):
                 quoted_content += f"\nव्याख्या: {q_data['explanation']}"
         
-        # Method 3: Text message
         elif rep.text:
             quoted_content = f"प्रश्न / मैसेज: {rep.text}"
         elif rep.caption:
@@ -531,7 +581,7 @@ def answer_text_query(message, query):
         bot.send_chat_action(message.chat.id, "typing")
         parts = [{"text": query}]
         answer = call_gemini(parts, SYSTEM_PROMPT)
-        bot.reply_to(message, answer)
+        safe_send_html(message.chat.id, answer, reply_to_message_id=message.message_id)
     except Exception as e:
         logger.error(f"Text query error: {e}")
         bot.reply_to(message, f"❌ एरर: {e}")
