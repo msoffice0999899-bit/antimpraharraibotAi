@@ -34,6 +34,18 @@ if not TELEGRAM_BOT_TOKEN:
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
+# ⭐ Bot info एक बार ही लोड करो (हर बार get_me नहीं करना पड़ेगा)
+BOT_INFO = None
+BOT_ID = 0
+BOT_USERNAME = ""
+try:
+    BOT_INFO = bot.get_me()
+    BOT_ID = BOT_INFO.id
+    BOT_USERNAME = f"@{BOT_INFO.username}".lower()
+    logger.info(f"Bot loaded: {BOT_USERNAME} (ID: {BOT_ID})")
+except Exception as e:
+    logger.error(f"Failed to get bot info: {e}")
+
 # Super-fast Lite & Flash models
 GEMINI_MODELS = [
     "gemini-3.5-flash-lite",
@@ -56,7 +68,10 @@ SYSTEM_PROMPT = (
 
 AUTO_TRIGGERS = [
     "explain", "samjhao", "batao", "solution", "solve", "kaise", 
-    "why", "answer", "uttar", "हल", "समझाओ", "बताओ", "स्पष्ट", "details", "?"
+    "why", "answer", "uttar", "हल", "समझाओ", "बताओ", "स्पष्ट", "details", "?",
+    "kya", "kyu", "kyun", "kyon", "kon", "kaun", "kab", "kaha",
+    "bta", "btao", "smjhao", "smjha", "explain", "hint", "help",
+    "क्यों", "क्या", "कौन", "कब", "कैसे", "कहाँ", "सही", "गलत"
 ]
 
 def is_chat_allowed(chat_id):
@@ -76,7 +91,23 @@ def rotate_to_next_key():
         current_key_index = (current_key_index + 1) % len(GEMINI_KEYS_LIST)
         logger.info(f"Switched to next API Key (Key #{current_key_index + 1} of {len(GEMINI_KEYS_LIST)})")
 
-# ================= 2. GEMINI REST API CLIENT (AUTO-ROTATION) =================
+def is_tagged(text):
+    """Check if bot is tagged in the text"""
+    if not BOT_USERNAME or not text:
+        return False
+    return BOT_USERNAME in text.lower()
+
+def has_trigger_word(text):
+    """Check if text contains any trigger word"""
+    if not text:
+        return False
+    text_lower = text.lower().strip()
+    for trigger in AUTO_TRIGGERS:
+        if trigger in text_lower:
+            return True
+    return False
+
+# ================= 2. GEMINI REST API CLIENT =================
 def call_gemini(parts, system_instruction=None):
     payload = {
         "contents": [{"parts": parts}],
@@ -111,7 +142,7 @@ def call_gemini(parts, system_instruction=None):
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=20) as response:
+                with urllib.request.urlopen(req, timeout=25) as response:
                     result = json.loads(response.read().decode("utf-8"))
                     candidates = result.get("candidates", [])
                     if candidates:
@@ -191,7 +222,11 @@ try:
 except Exception as e:
     logger.warning(f"Using default quiz bank: {e}")
 
-# ================= 4. RENDER 24/7 WEB SERVER (UPTIME MONITOR FIXED) =================
+# ⭐ Quiz Poll Tracking: जब भी बॉट quiz भेजता है, उसका message_id और data save करो
+# ताकि reply करने पर poll data available हो
+POLL_TRACKER = {}   # message_id -> quiz dict
+
+# ================= 4. RENDER 24/7 WEB SERVER =================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -199,7 +234,6 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Telegram AI Study Bot is alive and running on Render!")
 
-    # Uptime Monitor (HEAD requests) के लिए 200 OK सपोर्ट (501 एरर फिक्स)
     def do_HEAD(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
@@ -220,15 +254,13 @@ threading.Thread(target=run_health_server, daemon=True).start()
 
 # ================= 5. TELEGRAM BOT HANDLERS =================
 
-# ग्रुप ID जानने के लिए कमांड
 @bot.message_handler(commands=['id', 'groupid'])
 def send_group_id(message):
     bot.reply_to(message, f"📌 इस चैट का ID है: `{message.chat.id}`", parse_mode="Markdown")
 
-# अनधिकृत ग्रुप में जोड़े जाने पर बाहर निकलना
 @bot.message_handler(content_types=['new_chat_members'])
 def on_user_joins(message):
-    if any(m.id == bot.get_me().id for m in message.new_chat_members):
+    if any(m.id == BOT_ID for m in message.new_chat_members):
         if not is_chat_allowed(message.chat.id):
             bot.send_message(message.chat.id, "❌ यह बॉट केवल अधिकृत स्टडी ग्रुप में कार्य करने के लिए आरक्षित है।")
             bot.leave_chat(message.chat.id)
@@ -252,8 +284,9 @@ def send_welcome(message):
         "✨ *कमांड्स और फीचर्स:*\n"
         "🔹 `/quiz` - Telegram क्विज़ खेलें\n"
         "🔹 `/ask <सवाल>` - किसी भी विषय पर मुझसे पूछें\n"
-        "🔹 *क्विज़/सवाल पर Reply करें* - क्विज़ बॉट के सवाल पर रिप्लाई करके सिर्फ `explain` या `समझाओ` लिखें\n"
-        "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें, मैं हल समझाऊँगा\n"
+        "🔹 *किसी भी मैसेज/क्विज़/फोटो पर Reply करें* और `explain` / `समझाओ` / `?` लिखें — बॉट बिना टैग जवाब देगा!\n"
+        "🔹 *बॉट को टैग करें* - कहीं भी `" + BOT_USERNAME + "` लिखकर सवाल पूछें\n"
+        "🔹 *फोटो डाउट सॉल्विंग* - किताब या प्रश्न की फोटो भेजें\n"
         "🔹 `/id` - ग्रुप की ID देखने के लिए"
     )
     bot.reply_to(message, text, parse_mode="Markdown")
@@ -265,7 +298,7 @@ def send_quiz(message):
 
     q = random.choice(QUIZ_BANK)
     try:
-        bot.send_poll(
+        sent = bot.send_poll(
             chat_id=message.chat.id,
             question=q["question"],
             options=q["options"],
@@ -274,6 +307,9 @@ def send_quiz(message):
             explanation=q.get("explanation", ""),
             is_anonymous=False
         )
+        # ⭐ Track this poll message so replies to it can access the quiz data
+        POLL_TRACKER[sent.message_id] = q
+        logger.info(f"Quiz sent and tracked: msg_id={sent.message_id}")
     except Exception as e:
         logger.error(f"Quiz send error: {e}")
         bot.reply_to(message, "⚠️ क्विज़ भेजने में समस्या हुई। कृपया दोबारा प्रयास करें।")
@@ -290,22 +326,20 @@ def handle_ask(message):
     query = parts[1].strip()
     answer_text_query(message, query)
 
+# सीधे फोटो भेजने पर हैंडल करना (Direct Photo)
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     if message.chat.type == "private" or not is_chat_allowed(message.chat.id):
         return
 
     caption = message.caption or ""
-    bot_username = ""
-    try:
-        bot_username = f"@{bot.get_me().username}"
-    except Exception:
-        pass
 
-    is_tagged = bot_username and (bot_username.lower() in caption.lower())
-    is_reply = (message.reply_to_message and message.reply_to_message.from_user.id == bot.get_me().id)
+    is_bot_tagged = is_tagged(caption)
+    is_reply_to_bot = (message.reply_to_message and 
+                       message.reply_to_message.from_user and 
+                       message.reply_to_message.from_user.id == BOT_ID)
 
-    if not (is_tagged or is_reply or caption.startswith("/ask")):
+    if not (is_bot_tagged or is_reply_to_bot or caption.lower().startswith("/ask")):
         return
 
     status = bot.reply_to(message, "🔍 फोटो देखी जा रही है...")
@@ -316,11 +350,11 @@ def handle_photo(message):
         downloaded = bot.download_file(file_info.file_path)
         base64_img = base64.b64encode(downloaded).decode("utf-8")
 
-        prompt = caption.replace(bot_username, "").replace("/ask", "").strip()
+        prompt = caption.replace(BOT_USERNAME, "").replace("/ask", "").strip()
         if not prompt:
             prompt = "इस फोटो में दिए गए प्रश्न को पहचानें और छात्र के लिए 3-4 बुलेट पॉइंट्स में संक्षेप में हल समझाएं।"
 
-        parts = [
+        gemini_parts = [
             {"text": prompt},
             {
                 "inlineData": {
@@ -330,72 +364,167 @@ def handle_photo(message):
             }
         ]
 
-        answer = call_gemini(parts, SYSTEM_PROMPT)
+        answer = call_gemini(gemini_parts, SYSTEM_PROMPT)
         bot.delete_message(message.chat.id, status.message_id)
         bot.reply_to(message, answer)
     except Exception as e:
         logger.error(f"Photo handling error: {e}")
-        bot.edit_message_text(f"❌ समस्या आई: {e}", chat_id=message.chat.id, message_id=status.message_id)
+        try:
+            bot.edit_message_text(f"❌ समस्या आई: {e}", chat_id=message.chat.id, message_id=status.message_id)
+        except:
+            pass
 
+# ⭐⭐⭐ MAIN TEXT HANDLER: सभी text messages, replies, quiz poll replies ⭐⭐⭐
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     if message.chat.type == "private" or not is_chat_allowed(message.chat.id):
         return
 
-    bot_username = ""
-    try:
-        bot_username = f"@{bot.get_me().username}"
-    except Exception:
-        pass
-
-    text_lower = message.text.lower()
-    is_tagged = bot_username and (bot_username.lower() in text_lower)
-    is_reply = bool(message.reply_to_message)
+    text = message.text or ""
+    text_lower = text.lower().strip()
+    
+    bot_tagged = is_tagged(text)
+    has_reply = bool(message.reply_to_message)
+    has_trigger = has_trigger_word(text)
 
     should_respond = False
     
-    # 1. अगर सीधे बॉट को टैग किया गया है
-    if is_tagged:
+    # ──────────────────────────────────────────────────────
+    # CASE 1: बॉट को टैग किया गया है → हमेशा जवाब दो
+    # ──────────────────────────────────────────────────────
+    if bot_tagged:
         should_respond = True
-    elif is_reply:
-        rep = message.reply_to_message
-        has_trigger = any(trigger in text_lower for trigger in AUTO_TRIGGERS)
+        logger.info(f"Responding: bot tagged by {message.from_user.first_name}")
 
-        # A. अगर हमारे बॉट के मैसेज या पोल पर रिप्लाई है
-        if rep.from_user and rep.from_user.id == bot.get_me().id:
+    # ──────────────────────────────────────────────────────
+    # CASE 2: किसी मैसेज पर Reply किया गया है
+    # ──────────────────────────────────────────────────────
+    elif has_reply:
+        rep = message.reply_to_message
+        
+        # A. अगर बॉट के खुद के मैसेज पर Reply है → हमेशा जवाब दो (बिना trigger)
+        if rep.from_user and rep.from_user.id == BOT_ID:
             should_respond = True
-        # B. अगर किसी भी Quiz Poll पर रिप्लाई है
+            logger.info("Responding: reply to bot's own message")
+        
+        # B. ⭐ अगर POLL/QUIZ पर Reply है (Telegram poll data reply मैसेज में नहीं भेजता,
+        #    इसलिए हम forward_origin / poll दोनों चेक करते हैं + POLL_TRACKER से data लेते हैं)
         elif rep.poll:
             should_respond = True
-        # C. अगर किसी दूसरे BOT (जैसे MAHIQUIZBOT) के मैसेज पर रिप्लाई करके explain/samjhao लिखा है
+            logger.info("Responding: reply to poll (poll data available)")
+        
+        # C. ⭐ अगर reply_to_message में poll नहीं आया लेकिन POLL_TRACKER में है
+        elif rep.message_id in POLL_TRACKER:
+            should_respond = True
+            logger.info(f"Responding: reply to tracked quiz poll (msg_id={rep.message_id})")
+        
+        # D. ⭐ अगर किसी BOT के मैसेज पर Reply + trigger word है
         elif rep.from_user and rep.from_user.is_bot and has_trigger:
             should_respond = True
+            logger.info(f"Responding: reply to bot message with trigger")
+        
+        # E. ⭐ अगर किसी PHOTO पर Reply + trigger word / tag है
+        elif rep.photo and (has_trigger or bot_tagged):
+            should_respond = True
+            logger.info("Responding: reply to photo with trigger")
+        
+        # F. ⭐⭐ NEW: अगर किसी भी मैसेज पर Reply + trigger word है
+        #    (Human message भी — जैसे किसी ने question लिखा और दूसरे ने "explain" reply किया)
+        elif has_trigger:
+            should_respond = True
+            logger.info("Responding: reply to any message with trigger word")
 
-    if should_respond:
-        clean_text = message.text.replace(bot_username, "").strip()
+    # अगर respond नहीं करना तो return
+    if not should_respond:
+        return
+    
+    # ──────────────────────────────────────────────────────
+    # जवाब देने की तैयारी
+    # ──────────────────────────────────────────────────────
+    clean_text = text.replace(BOT_USERNAME, "").replace(BOT_USERNAME.replace("@", ""), "").strip()
+    # Also remove @tag with different case
+    if BOT_INFO:
+        clean_text = clean_text.replace(f"@{BOT_INFO.username}", "").strip()
+    
+    rep = message.reply_to_message
 
-        quoted_content = ""
-        if message.reply_to_message:
-            rep = message.reply_to_message
-            if rep.poll:
-                opts = ", ".join([opt.text for opt in rep.poll.options])
-                quoted_content = f"क्विज़ पोल प्रश्न: {rep.poll.question}\nविकल्प: {opts}"
-            elif rep.text:
-                quoted_content = f"प्रश्न / मैसेज: {rep.text}"
-            elif rep.caption:
-                quoted_content = f"प्रश्न कैप्शन: {rep.caption}"
+    # ⭐ PHOTO REPLY: अगर reply किया गया मैसेज एक PHOTO है
+    if rep and rep.photo:
+        status = bot.reply_to(message, "🔍 फोटो देखी जा रही है...")
+        try:
+            bot.send_chat_action(message.chat.id, "typing")
+            file_info = bot.get_file(rep.photo[-1].file_id)
+            downloaded = bot.download_file(file_info.file_path)
+            base64_img = base64.b64encode(downloaded).decode("utf-8")
 
-        if quoted_content:
-            query = (
-                f"छात्र ने ग्रुप में निम्नलिखित प्रश्न पर संक्षेप में उत्तर माँगा है:\n\n"
-                f"{quoted_content}\n\n"
-                f"छात्र का सवाल / अनुरोध: {clean_text if clean_text else 'कृपया सिर्फ सही उत्तर और 3-4 मुख्य बिंदु संक्षेप में बताएं।'}"
-            )
-        else:
-            query = clean_text
+            user_query = clean_text if clean_text else "इस फोटो में दिए गए प्रश्न को पहचानें और छात्र के लिए 3-4 बुलेट पॉइंट्स में संक्षेप में हल समझाएं।"
+            if rep.caption:
+                user_query = f"फोटो कैप्शन: {rep.caption}\nछात्र का सवाल: {user_query}"
 
-        if query:
-            answer_text_query(message, query)
+            gemini_parts = [
+                {"text": user_query},
+                {
+                    "inlineData": {
+                        "mimeType": "image/jpeg",
+                        "data": base64_img
+                    }
+                }
+            ]
+
+            answer = call_gemini(gemini_parts, SYSTEM_PROMPT)
+            bot.delete_message(message.chat.id, status.message_id)
+            bot.reply_to(message, answer)
+        except Exception as e:
+            logger.error(f"Replied photo error: {e}")
+            try:
+                bot.edit_message_text(f"❌ समस्या आई: {e}", chat_id=message.chat.id, message_id=status.message_id)
+            except:
+                pass
+        return
+
+    # ⭐ QUIZ POLL REPLY: quiz poll ka data nikalo
+    quoted_content = ""
+    if rep:
+        # Method 1: Telegram ne poll data diya (rep.poll)
+        if rep.poll:
+            opts = ", ".join([opt.text for opt in rep.poll.options])
+            correct_idx = getattr(rep.poll, 'correct_option_id', None)
+            correct_ans = ""
+            if correct_idx is not None and correct_idx < len(rep.poll.options):
+                correct_ans = rep.poll.options[correct_idx].text
+            quoted_content = f"क्विज़ पोल प्रश्न: {rep.poll.question}\nविकल्प: {opts}"
+            if correct_ans:
+                quoted_content += f"\nसही उत्तर: {correct_ans}"
+            expl = getattr(rep.poll, 'explanation', None)
+            if expl:
+                quoted_content += f"\nव्याख्या: {expl}"
+        
+        # Method 2: POLL_TRACKER से data (जब poll data reply में नहीं आता)
+        elif rep.message_id in POLL_TRACKER:
+            q_data = POLL_TRACKER[rep.message_id]
+            opts = ", ".join(q_data["options"])
+            correct_ans = q_data["options"][q_data["correct_option_id"]]
+            quoted_content = f"क्विज़ पोल प्रश्न: {q_data['question']}\nविकल्प: {opts}\nसही उत्तर: {correct_ans}"
+            if q_data.get("explanation"):
+                quoted_content += f"\nव्याख्या: {q_data['explanation']}"
+        
+        # Method 3: Text message
+        elif rep.text:
+            quoted_content = f"प्रश्न / मैसेज: {rep.text}"
+        elif rep.caption:
+            quoted_content = f"प्रश्न कैप्शन: {rep.caption}"
+
+    if quoted_content:
+        query = (
+            f"छात्र ने ग्रुप में निम्नलिखित प्रश्न पर संक्षेप में उत्तर माँगा है:\n\n"
+            f"{quoted_content}\n\n"
+            f"छात्र का सवाल / अनुरोध: {clean_text if clean_text else 'कृपया सिर्फ सही उत्तर और 3-4 मुख्य बिंदु संक्षेप में बताएं।'}"
+        )
+    else:
+        query = clean_text
+
+    if query:
+        answer_text_query(message, query)
 
 def answer_text_query(message, query):
     try:
@@ -409,9 +538,8 @@ def answer_text_query(message, query):
 
 # ================= 6. START BOT =================
 if __name__ == "__main__":
-    me = bot.get_me()
     print("=" * 50)
-    print(f"✅ Bot successfully running as: @{me.username} (Name: {me.first_name})")
+    print(f"✅ Bot successfully running as: {BOT_USERNAME} (ID: {BOT_ID})")
     print(f"🔑 Loaded {len(GEMINI_KEYS_LIST)} Gemini API Key(s) from Environment Variables")
     print(f"🔒 Group Whitelisting Active: {ALLOWED_GROUP_IDS if ALLOWED_GROUP_IDS else 'All Groups Allowed'}")
     print(f"🌐 Health server running on port {PORT} for Render 24/7 hosting")
