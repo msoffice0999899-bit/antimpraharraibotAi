@@ -7,6 +7,7 @@ import base64
 import random
 import logging
 import threading
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.request
 import urllib.error
@@ -49,38 +50,41 @@ except Exception as e:
 
 # Fast & Reliable Gemini Models
 GEMINI_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
     "gemini-3.5-flash-lite",
     "gemini-flash-lite-latest",
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.7-flash"
+    "gemini-3.1-flash-lite"
 ]
 
-SYSTEM_PROMPT = (
-    "You are an elite, highly accurate AI Study Tutor and Fact-Checker for competitive exam students (UPSC, SSC, State PSC, NEET, etc.).\n\n"
-    "CRITICAL FACT-CHECKING RULE:\n"
-    "- DO NOT blindly trust the answer marked in the quiz poll or by the user!\n"
-    "- Always verify from authentic standard textbooks (NCERT, authentic history/science/polity facts).\n"
-    "- If the quiz's marked answer is WRONG, boldly clarify: '⚠️ क्विज़ में विकल्प X मार्क है, परंतु मानक तथ्यों के अनुसार वास्तविक सही उत्तर Y है।'\n\n"
-    "FORMATTING & DESIGN RULES (Telegram HTML):\n"
-    "- Wrap the entire response inside <blockquote>...</blockquote> tags for a sleek card design.\n"
-    "- Header: 🎯 <b>STUDY CAPSULE | अंतिम प्रहार™</b>\\n━━━━━━━━━━━━━━━━━━━\\n\n"
-    "- First line: ✅ <b>प्रामाणिक सही उत्तर:</b> <code>[Actual Correct Answer]</code>\n"
-    "- Next line: 📌 <b>मुख्य बिंदु व स्पष्टीकरण:</b>\n"
-    "- Use 3-4 bullet points starting with 🔹. Bold key keywords using <b>...</b>.\n"
-    "- Use <i>italic</i> for English technical/scientific terms.\n"
-    "- End with: ━━━━━━━━━━━━━━━━━━━\\n💡 <b>याद रखने योग्य ट्रिक/तथ्य:</b> <i>[One-line powerful revision tip]</i>\n\n"
-    "- Keep it SHORT, CRISP, NO long paragraphs.\n"
-    "- Only use valid Telegram HTML: <blockquote>, <b>, <i>, <code>. Do NOT use markdown (** or __). Do NOT use <br> tags."
-)
+def get_system_prompt():
+    today_str = datetime.now().strftime("%d %B %Y")
+    return (
+        f"You are an elite, highly updated AI Study Tutor and Real-Time Exam Specialist for competitive exams (Railway RRB, SSC, State PSC, Police, Banking, Defence, UPSC).\n"
+        f"Today's Date: {today_str}.\n\n"
+        "CORE SEARCH & FACT-CHECKING DIRECTIVES:\n"
+        "- ALWAYS use your Google Search capability to check the latest real-time authentic government announcements, vacancies, exams, and syllabus.\n"
+        "- If a student asks about a vacancy or exam with an approximate year or typo (e.g., 'NTPC 2026'), search and match with the latest active/running recruitment cycle (e.g. RRB NTPC CEN 05/2024 & CEN 06/2024, post count, deadlines, etc.).\n"
+        "- Give accurate facts, exact dates, total post counts, eligibility, and the official portal.\n\n"
+        "TELEGRAM HTML DESIGN RULES:\n"
+        "- Wrap the entire response in <blockquote>...</blockquote>.\n"
+        "- Header: 🎯 <b>STUDY CAPSULE | अंतिम प्रहार™</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "- First line: ✅ <b>प्रामाणिक उत्तर / स्थिति:</b> [Direct crisp answer in bold]\n"
+        "- Next: 📌 <b>नवीनतम तथ्य व विवरण:</b>\n"
+        "- Use 3-4 bullet points starting with 🔹. Bold key keywords using <b>...</b>.\n"
+        "- Use <i>italic</i> for English technical terms/dates.\n"
+        "- End with: ━━━━━━━━━━━━━━━━━━━\n💡 <b>महत्वपूर्ण सलाह / निष्कर्ष:</b> <i>[One-line powerful tip]</i>\n\n"
+        "- Keep it SHORT, CRISP, TO-THE-POINT.\n"
+        "- ONLY use valid Telegram HTML: <blockquote>, <b>, <i>, <code>. Do NOT use markdown (** or __). Do NOT use <br> tags."
+    )
 
 AUTO_TRIGGERS = [
     "explain", "samjhao", "batao", "solution", "solve", "kaise", 
     "why", "answer", "uttar", "हल", "समझाओ", "बताओ", "स्पष्ट", "details", "?",
     "kya", "kyu", "kyun", "kyon", "kon", "kaun", "kab", "kaha",
-    "bta", "btao", "smjhao", "smjha", "hint", "help",
-    "क्यों", "क्या", "कौन", "कब", "कैसे", "कहाँ", "सही", "गलत"
+    "bta", "btao", "smjhao", "smjha", "hint", "help", "vacancy", "form", "date",
+    "क्यों", "क्या", "कौन", "कब", "कैसे", "कहाँ", "सही", "गलत", "वैकेंसी", "भर्ती"
 ]
 
 def is_chat_allowed(chat_id):
@@ -137,10 +141,14 @@ def md_to_html(text):
     for idx, tag in enumerate(protected):
         text = text.replace(f"__PROTECTED_{idx}__", tag)
     
+    # Clean broken markdown lines
+    text = re.sub(r'[_]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
+    text = re.sub(r'[-]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
+    
     # Convert markdown tags
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
-    text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
+    text = re.sub(r'`(.+?)`', r'<b>\1</b>', text)
     text = re.sub(r'^#{1,3}\s*(.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
     text = re.sub(r'^[\-]\s+', '🔹 ', text, flags=re.MULTILINE)
     text = re.sub(r'^\*\s+', '🔹 ', text, flags=re.MULTILINE)
@@ -158,19 +166,24 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
         else:
             bot.send_message(chat_id, html_text, parse_mode="HTML")
     except Exception as e:
-        logger.warning(f"HTML send failed ({e}), sending fallback text")
-        plain = re.sub(r'<[^>]+>', '', html_text)
-        if reply_to_message_id:
-            bot.send_message(chat_id, plain, reply_to_message_id=reply_to_message_id)
-        else:
-            bot.send_message(chat_id, plain)
+        logger.warning(f"HTML send failed with reply ({e}), trying fallback")
+        try:
+            bot.send_message(chat_id, html_text, parse_mode="HTML")
+        except Exception as e2:
+            plain = re.sub(r'<[^>]+>', '', html_text)
+            try:
+                bot.send_message(chat_id, plain)
+            except Exception as e3:
+                logger.error(f"Final send failed: {e3}")
 
-# ================= 2. GEMINI REST API CLIENT =================
+# ================= 2. GEMINI REST API WITH LIVE GOOGLE SEARCH =================
 def call_gemini(parts, system_instruction=None):
+    # ⭐ Live Google Search Tool Enabled
     payload = {
         "contents": [{"parts": parts}],
+        "tools": [{"googleSearch": {}}],
         "generationConfig": {
-            "maxOutputTokens": 600,
+            "maxOutputTokens": 700,
             "temperature": 0.2
         }
     }
@@ -199,7 +212,7 @@ def call_gemini(parts, system_instruction=None):
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=25) as response:
+                with urllib.request.urlopen(req, timeout=30) as response:
                     result = json.loads(response.read().decode("utf-8"))
                     candidates = result.get("candidates", [])
                     if candidates:
@@ -213,6 +226,28 @@ def call_gemini(parts, system_instruction=None):
                 err_body = e.read().decode("utf-8", errors="ignore")
                 logger.warning(f"Key #{current_key_index + 1} | Model {model_name} HTTP {e.code}: {err_body[:100]}")
                 last_error = f"HTTP {e.code}"
+                
+                # If Google Search tool not supported on specific model, fallback to normal call
+                if "googleSearch" in err_body:
+                    try:
+                        no_search_payload = dict(payload)
+                        no_search_payload.pop("tools", None)
+                        req_fallback = urllib.request.Request(
+                            url,
+                            data=json.dumps(no_search_payload).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}
+                        )
+                        with urllib.request.urlopen(req_fallback, timeout=25) as resp:
+                            res = json.loads(resp.read().decode("utf-8"))
+                            cands = res.get("candidates", [])
+                            if cands:
+                                parts_o = cands[0].get("content", {}).get("parts", [])
+                                txt = "".join([p.get("text", "") for p in parts_o if "text" in p and not p.get("thought", False)]).strip()
+                                if txt:
+                                    return txt
+                    except Exception:
+                        pass
+
                 if e.code == 429:
                     key_quota_exhausted = True
                     break
@@ -341,11 +376,11 @@ def send_welcome(message):
         "━━━━━━━━━━━━━━━━━━━\n"
         "✨ <b>कमांड्स और फीचर्स:</b>\n"
         "🔹 /quiz — महत्वपूर्ण क्विज़ हल करें\n"
-        "🔹 /ask &lt;सवाल&gt; — कोई भी डाउट पूछें\n"
+        "🔹 /ask &lt;सवाल&gt; — कोई भी डाउट या लाइव वैकेंसी अपडेट पूछें\n"
         "🔹 <b>Reply Feature:</b> किसी भी प्रश्न, फोटो या क्विज़ पर स्वाइप करके सवाल पूछें!\n"
         "🔹 <b>Photo Solver:</b> सवाल की फोटो भेजें, बॉट तुरंत हल देगा 📸\n"
         "━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ <i>Fact-checked by Google Gemini AI</i>"
+        "⚡ <i>Powered by Google Gemini with Live Search</i>"
         "</blockquote>"
     )
     bot.reply_to(message, text, parse_mode="HTML")
@@ -379,7 +414,7 @@ def handle_ask(message):
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(message, "कृपया सवाल भी लिखें। उदाहरण:\n<code>/ask प्रकाश वर्ष क्या है?</code>", parse_mode="HTML")
+        bot.reply_to(message, "कृपया सवाल भी लिखें। उदाहरण:\n<code>/ask RRB NTPC vacancy update</code>", parse_mode="HTML")
         return
     query = parts[1].strip()
     answer_text_query(message, query)
@@ -400,7 +435,7 @@ def handle_photo(message):
     if not (is_bot_tagged or is_reply_to_bot or caption.lower().startswith("/ask")):
         return
 
-    status = bot.reply_to(message, "🔍 <i>फोटो का प्रामाणिक विश्लेषण किया जा रहा है...</i>", parse_mode="HTML")
+    status = bot.reply_to(message, "🔍 <i>फोटो व लाइव तथ्यों की जांच की जा रही है...</i>", parse_mode="HTML")
     try:
         bot.send_chat_action(message.chat.id, "typing")
         
@@ -410,7 +445,7 @@ def handle_photo(message):
 
         prompt = caption.replace(BOT_USERNAME, "").replace("/ask", "").strip()
         if not prompt:
-            prompt = "इस फोटो में दिए गए प्रश्न की गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
+            prompt = "इस फोटो में दिए गए प्रश्न/सूचना की लाइव सर्च से गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
 
         gemini_parts = [
             {"text": prompt},
@@ -422,8 +457,11 @@ def handle_photo(message):
             }
         ]
 
-        answer = call_gemini(gemini_parts, SYSTEM_PROMPT)
-        bot.delete_message(message.chat.id, status.message_id)
+        answer = call_gemini(gemini_parts, get_system_prompt())
+        try:
+            bot.delete_message(message.chat.id, status.message_id)
+        except Exception:
+            pass
         safe_send_html(message.chat.id, answer, reply_to_message_id=message.message_id)
     except Exception as e:
         logger.error(f"Photo handling error: {e}")
@@ -463,14 +501,14 @@ def handle_text(message):
 
     # ⭐ CASE 1: PHOTO REPLY
     if rep and rep.photo:
-        status = bot.reply_to(message, "🔍 <i>फोटो का प्रामाणिक विश्लेषण किया जा रहा है...</i>", parse_mode="HTML")
+        status = bot.reply_to(message, "🔍 <i>फोटो व लाइव तथ्यों की जांच की जा रही है...</i>", parse_mode="HTML")
         try:
             bot.send_chat_action(message.chat.id, "typing")
             file_info = bot.get_file(rep.photo[-1].file_id)
             downloaded = bot.download_file(file_info.file_path)
             base64_img = base64.b64encode(downloaded).decode("utf-8")
 
-            user_query = clean_text if clean_text else "इस फोटो में दिए गए प्रश्न की गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
+            user_query = clean_text if clean_text else "इस फोटो में दिए गए प्रश्न/सूचना की लाइव सर्च से गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
             if rep.caption:
                 user_query = f"फोटो कैप्शन: {rep.caption}\nछात्र का सवाल: {user_query}"
 
@@ -484,8 +522,11 @@ def handle_text(message):
                 }
             ]
 
-            answer = call_gemini(gemini_parts, SYSTEM_PROMPT)
-            bot.delete_message(message.chat.id, status.message_id)
+            answer = call_gemini(gemini_parts, get_system_prompt())
+            try:
+                bot.delete_message(message.chat.id, status.message_id)
+            except Exception:
+                pass
             safe_send_html(message.chat.id, answer, reply_to_message_id=message.message_id)
         except Exception as e:
             logger.error(f"Replied photo error: {e}")
@@ -510,7 +551,7 @@ def handle_text(message):
         elif rep.caption:
             quoted_content = f"प्रश्न कैप्शन: {rep.caption}"
 
-    # ⭐ AGAR TELEGRAM NE REPLY CONTENT BLANK DIYA HAI (e.g. Third-party Quiz Bots)
+    # ⭐ AGAR TELEGRAM NE REPLY CONTENT BLANK DIYA HAI
     if rep and not quoted_content:
         simple_triggers = ["explain", "samjhao", "batao", "solution", "solve", "?", "हल", "समझाओ", "बताओ"]
         is_only_trigger = clean_text.lower().strip() in simple_triggers or len(clean_text) <= 2
@@ -533,7 +574,7 @@ def handle_text(message):
             query = clean_text
     elif quoted_content:
         query = (
-            f"छात्र ने निम्नलिखित प्रश्न पर सहायता मांगी है। कृपया तथ्यों की स्वयं गहन जांच करें और सही उत्तर बताएं (क्विज़ के विकल्पों पर आंख मूंदकर भरोसा न करें):\n\n"
+            f"छात्र ने निम्नलिखित प्रश्न/विषय पर सहायता मांगी है। कृपया Google Live Search से सटीक व नवीनतम प्रामाणिक जानकारी खोजें:\n\n"
             f"{quoted_content}\n\n"
             f"छात्र का विशेष अनुरोध: {clean_text if clean_text else 'कृपया प्रामाणिक सही उत्तर और मुख्य बिंदु बताएं।'}"
         )
@@ -547,11 +588,14 @@ def answer_text_query(message, query):
     try:
         bot.send_chat_action(message.chat.id, "typing")
         parts = [{"text": query}]
-        answer = call_gemini(parts, SYSTEM_PROMPT)
+        answer = call_gemini(parts, get_system_prompt())
         safe_send_html(message.chat.id, answer, reply_to_message_id=message.message_id)
     except Exception as e:
         logger.error(f"Text query error: {e}")
-        bot.reply_to(message, f"❌ एरर: {e}")
+        try:
+            bot.reply_to(message, f"❌ एरर: {e}")
+        except:
+            pass
 
 # ================= 6. START BOT =================
 if __name__ == "__main__":
