@@ -48,33 +48,33 @@ try:
 except Exception as e:
     logger.error(f"Failed to get bot info: {e}")
 
-# Fast & Reliable Gemini Models
+# High Rate-Limit Free Models
 GEMINI_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
     "gemini-3.5-flash-lite",
     "gemini-flash-lite-latest",
-    "gemini-3.1-flash-lite"
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash"
 ]
 
 def get_system_prompt():
     today_str = datetime.now().strftime("%d %B %Y")
     return (
-        f"You are an elite, highly updated AI Study Tutor and Real-Time Exam Specialist for competitive exams (Railway RRB, SSC, State PSC, Police, Banking, Defence, UPSC).\n"
-        f"Today's Date: {today_str}.\n\n"
-        "CORE SEARCH & FACT-CHECKING DIRECTIVES:\n"
-        "- ALWAYS use your Google Search capability to check the latest real-time authentic government announcements, vacancies, exams, and syllabus.\n"
-        "- If a student asks about a vacancy or exam with an approximate year or typo (e.g., 'NTPC 2026'), search and match with the latest active/running recruitment cycle (e.g. RRB NTPC CEN 05/2024 & CEN 06/2024, post count, deadlines, etc.).\n"
-        "- Give accurate facts, exact dates, total post counts, eligibility, and the official portal.\n\n"
+        f"You are an elite, highly knowledgeable AI Study Tutor and Exam Specialist for Indian competitive exams (Railway RRB, SSC, State PSC, Police, Banking, Defence, UPSC).\n"
+        f"Current Date: {today_str}.\n\n"
+        "CORE STUDY & EXAM DIRECTIVES:\n"
+        "- Give 100% accurate, authentic, and conceptual answers based on standard reference material (NCERT, authentic history/science/polity/maths facts).\n"
+        "- If a student asks about vacancies (e.g., RRB NTPC, SSC, Railway) with an approximate year or typo (e.g. 'NTPC 2026'), understand the intent and relate to the active recruitment notifications (e.g. RRB NTPC CEN 05/2024 Graduate & CEN 06/2024 Undergraduate 11,558+ posts).\n\n"
         "TELEGRAM HTML DESIGN RULES:\n"
         "- Wrap the entire response in <blockquote>...</blockquote>.\n"
         "- Header: 🎯 <b>STUDY CAPSULE | अंतिम प्रहार™</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n\n"
-        "- First line: ✅ <b>प्रामाणिक उत्तर / स्थिति:</b> [Direct crisp answer in bold]\n"
-        "- Next: 📌 <b>नवीनतम तथ्य व विवरण:</b>\n"
+        "- First line: ✅ <b>प्रामाणिक उत्तर / हल:</b> [Direct crisp answer in bold]\n"
+        "- Next: 📌 <b>मुख्य बिंदु व स्पष्टीकरण:</b>\n"
         "- Use 3-4 bullet points starting with 🔹. Bold key keywords using <b>...</b>.\n"
         "- Use <i>italic</i> for English technical terms/dates.\n"
-        "- End with: ━━━━━━━━━━━━━━━━━━━\n💡 <b>महत्वपूर्ण सलाह / निष्कर्ष:</b> <i>[One-line powerful tip]</i>\n\n"
+        "- End with: ━━━━━━━━━━━━━━━━━━━\n💡 <b>याद रखने योग्य ट्रिक / टिप:</b> <i>[One-line powerful revision tip]</i>\n\n"
         "- Keep it SHORT, CRISP, TO-THE-POINT.\n"
         "- ONLY use valid Telegram HTML: <blockquote>, <b>, <i>, <code>. Do NOT use markdown (** or __). Do NOT use <br> tags."
     )
@@ -176,25 +176,9 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
             except Exception as e3:
                 logger.error(f"Final send failed: {e3}")
 
-# ================= 2. GEMINI REST API WITH LIVE GOOGLE SEARCH =================
+# ================= 2. GEMINI REST API (FAIL-SAFE 429 RECOVERY) =================
 def call_gemini(parts, system_instruction=None):
-    # ⭐ Live Google Search Tool Enabled
-    payload = {
-        "contents": [{"parts": parts}],
-        "tools": [{"googleSearch": {}}],
-        "generationConfig": {
-            "maxOutputTokens": 700,
-            "temperature": 0.2
-        }
-    }
-
-    if system_instruction:
-        payload["systemInstruction"] = {
-            "parts": [{"text": system_instruction}]
-        }
-
-    encoded_data = json.dumps(payload).encode("utf-8")
-    total_keys = len(GEMINI_KEYS_LIST)
+    total_keys = max(1, len(GEMINI_KEYS_LIST))
     last_error = ""
 
     for _ in range(total_keys):
@@ -205,6 +189,19 @@ def call_gemini(parts, system_instruction=None):
         key_quota_exhausted = False
 
         for model_name in GEMINI_MODELS:
+            payload = {
+                "contents": [{"parts": parts}],
+                "generationConfig": {
+                    "maxOutputTokens": 600,
+                    "temperature": 0.3
+                }
+            }
+            if system_instruction:
+                payload["systemInstruction"] = {
+                    "parts": [{"text": system_instruction}]
+                }
+
+            encoded_data = json.dumps(payload).encode("utf-8")
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key}"
             req = urllib.request.Request(
                 url,
@@ -212,7 +209,7 @@ def call_gemini(parts, system_instruction=None):
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=30) as response:
+                with urllib.request.urlopen(req, timeout=25) as response:
                     result = json.loads(response.read().decode("utf-8"))
                     candidates = result.get("candidates", [])
                     if candidates:
@@ -221,32 +218,10 @@ def call_gemini(parts, system_instruction=None):
                         final_text = "".join(text_parts).strip()
                         if final_text:
                             return final_text
-                    return "माफ़ कीजिये, इस प्रश्न का उत्तर नहीं मिल पाया।"
             except urllib.error.HTTPError as e:
                 err_body = e.read().decode("utf-8", errors="ignore")
-                logger.warning(f"Key #{current_key_index + 1} | Model {model_name} HTTP {e.code}: {err_body[:100]}")
+                logger.warning(f"Key #{current_key_index + 1} | Model {model_name} HTTP {e.code}")
                 last_error = f"HTTP {e.code}"
-                
-                # If Google Search tool not supported on specific model, fallback to normal call
-                if "googleSearch" in err_body:
-                    try:
-                        no_search_payload = dict(payload)
-                        no_search_payload.pop("tools", None)
-                        req_fallback = urllib.request.Request(
-                            url,
-                            data=json.dumps(no_search_payload).encode("utf-8"),
-                            headers={"Content-Type": "application/json"}
-                        )
-                        with urllib.request.urlopen(req_fallback, timeout=25) as resp:
-                            res = json.loads(resp.read().decode("utf-8"))
-                            cands = res.get("candidates", [])
-                            if cands:
-                                parts_o = cands[0].get("content", {}).get("parts", [])
-                                txt = "".join([p.get("text", "") for p in parts_o if "text" in p and not p.get("thought", False)]).strip()
-                                if txt:
-                                    return txt
-                    except Exception:
-                        pass
 
                 if e.code == 429:
                     key_quota_exhausted = True
@@ -259,7 +234,7 @@ def call_gemini(parts, system_instruction=None):
                 last_error = str(e)
                 continue
 
-        if key_quota_exhausted and total_keys > 1:
+        if key_quota_exhausted and len(GEMINI_KEYS_LIST) > 1:
             rotate_to_next_key()
             continue
 
@@ -376,11 +351,11 @@ def send_welcome(message):
         "━━━━━━━━━━━━━━━━━━━\n"
         "✨ <b>कमांड्स और फीचर्स:</b>\n"
         "🔹 /quiz — महत्वपूर्ण क्विज़ हल करें\n"
-        "🔹 /ask &lt;सवाल&gt; — कोई भी डाउट या लाइव वैकेंसी अपडेट पूछें\n"
+        "🔹 /ask &lt;सवाल&gt; — कोई भी डाउट या वैकेंसी अपडेट पूछें\n"
         "🔹 <b>Reply Feature:</b> किसी भी प्रश्न, फोटो या क्विज़ पर स्वाइप करके सवाल पूछें!\n"
         "🔹 <b>Photo Solver:</b> सवाल की फोटो भेजें, बॉट तुरंत हल देगा 📸\n"
         "━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ <i>Powered by Google Gemini with Live Search</i>"
+        "⚡ <i>24/7 Active AI Study Partner</i>"
         "</blockquote>"
     )
     bot.reply_to(message, text, parse_mode="HTML")
@@ -435,7 +410,7 @@ def handle_photo(message):
     if not (is_bot_tagged or is_reply_to_bot or caption.lower().startswith("/ask")):
         return
 
-    status = bot.reply_to(message, "🔍 <i>फोटो व लाइव तथ्यों की जांच की जा रही है...</i>", parse_mode="HTML")
+    status = bot.reply_to(message, "🔍 <i>फोटो व तथ्यों का विश्लेषण किया जा रहा है...</i>", parse_mode="HTML")
     try:
         bot.send_chat_action(message.chat.id, "typing")
         
@@ -445,7 +420,7 @@ def handle_photo(message):
 
         prompt = caption.replace(BOT_USERNAME, "").replace("/ask", "").strip()
         if not prompt:
-            prompt = "इस फोटो में दिए गए प्रश्न/सूचना की लाइव सर्च से गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
+            prompt = "इस फोटो में दिए गए प्रश्न/सूचना की गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
 
         gemini_parts = [
             {"text": prompt},
@@ -501,14 +476,14 @@ def handle_text(message):
 
     # ⭐ CASE 1: PHOTO REPLY
     if rep and rep.photo:
-        status = bot.reply_to(message, "🔍 <i>फोटो व लाइव तथ्यों की जांच की जा रही है...</i>", parse_mode="HTML")
+        status = bot.reply_to(message, "🔍 <i>फोटो व तथ्यों का विश्लेषण किया जा रहा है...</i>", parse_mode="HTML")
         try:
             bot.send_chat_action(message.chat.id, "typing")
             file_info = bot.get_file(rep.photo[-1].file_id)
             downloaded = bot.download_file(file_info.file_path)
             base64_img = base64.b64encode(downloaded).decode("utf-8")
 
-            user_query = clean_text if clean_text else "इस फोटो में दिए गए प्रश्न/सूचना की लाइव सर्च से गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
+            user_query = clean_text if clean_text else "इस फोटो में दिए गए प्रश्न/सूचना की गहन जांच करें, सही उत्तर सत्यापित करें और 3-4 बुलेट पॉइंट्स में स्पष्टीकरण दें।"
             if rep.caption:
                 user_query = f"फोटो कैप्शन: {rep.caption}\nछात्र का सवाल: {user_query}"
 
@@ -574,7 +549,7 @@ def handle_text(message):
             query = clean_text
     elif quoted_content:
         query = (
-            f"छात्र ने निम्नलिखित प्रश्न/विषय पर सहायता मांगी है। कृपया Google Live Search से सटीक व नवीनतम प्रामाणिक जानकारी खोजें:\n\n"
+            f"छात्र ने निम्नलिखित प्रश्न/विषय पर सहायता मांगी है। कृपया सटीक व प्रामाणिक जानकारी दें:\n\n"
             f"{quoted_content}\n\n"
             f"छात्र का विशेष अनुरोध: {clean_text if clean_text else 'कृपया प्रामाणिक सही उत्तर और मुख्य बिंदु बताएं।'}"
         )
