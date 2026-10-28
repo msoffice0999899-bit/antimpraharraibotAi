@@ -48,14 +48,14 @@ try:
 except Exception as e:
     logger.error(f"Failed to get bot info: {e}")
 
-# High Rate-Limit Free Models
+# High Rate-Limit Free Models - Ordered for maximum reliability & free quota
 GEMINI_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash"
+    "gemini-2.0-flash-lite-preview-02-05",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-3.5-flash-lite"
 ]
 
 def get_system_prompt():
@@ -65,7 +65,7 @@ def get_system_prompt():
         f"Current Date: {today_str}.\n\n"
         "CORE STUDY & EXAM DIRECTIVES:\n"
         "- Give 100% accurate, authentic, and conceptual answers based on standard reference material (NCERT, authentic history/science/polity/maths facts).\n"
-        "- If a student asks about vacancies (e.g., RRB NTPC, SSC, Railway) with an approximate year or typo (e.g. 'NTPC 2026'), understand the intent and relate to the active recruitment notifications (e.g. RRB NTPC CEN 05/2024 Graduate & CEN 06/2024 Undergraduate 11,558+ posts).\n\n"
+        "- If a student asks about vacancies (e.g., RRB NTPC, SSC, Railway) with an approximate year or typo (e.g. 'NTPC 2026'), understand the intent and relate to active notifications.\n\n"
         "TELEGRAM HTML DESIGN RULES:\n"
         "- Wrap the entire response in <blockquote>...</blockquote>.\n"
         "- Header: 🎯 <b>STUDY CAPSULE | अंतिम प्रहार™</b>\n"
@@ -179,29 +179,27 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
 # ================= 2. GEMINI REST API (FAIL-SAFE 429 RECOVERY) =================
 def call_gemini(parts, system_instruction=None):
     total_keys = max(1, len(GEMINI_KEYS_LIST))
-    last_error = ""
+    
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "maxOutputTokens": 600,
+            "temperature": 0.3
+        }
+    }
+    if system_instruction:
+        payload["systemInstruction"] = {
+            "parts": [{"text": system_instruction}]
+        }
+    encoded_data = json.dumps(payload).encode("utf-8")
 
-    for _ in range(total_keys):
+    # Sabhi keys aur sabhi models me try karenge
+    for key_attempt in range(total_keys):
         active_key = get_current_api_key()
         if not active_key:
             return "⚠️ कोई Gemini API Key उपलब्ध नहीं है।"
 
-        key_quota_exhausted = False
-
         for model_name in GEMINI_MODELS:
-            payload = {
-                "contents": [{"parts": parts}],
-                "generationConfig": {
-                    "maxOutputTokens": 600,
-                    "temperature": 0.3
-                }
-            }
-            if system_instruction:
-                payload["systemInstruction"] = {
-                    "parts": [{"text": system_instruction}]
-                }
-
-            encoded_data = json.dumps(payload).encode("utf-8")
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key}"
             req = urllib.request.Request(
                 url,
@@ -209,7 +207,7 @@ def call_gemini(parts, system_instruction=None):
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=25) as response:
+                with urllib.request.urlopen(req, timeout=20) as response:
                     result = json.loads(response.read().decode("utf-8"))
                     candidates = result.get("candidates", [])
                     if candidates:
@@ -219,26 +217,31 @@ def call_gemini(parts, system_instruction=None):
                         if final_text:
                             return final_text
             except urllib.error.HTTPError as e:
-                err_body = e.read().decode("utf-8", errors="ignore")
                 logger.warning(f"Key #{current_key_index + 1} | Model {model_name} HTTP {e.code}")
-                last_error = f"HTTP {e.code}"
-
                 if e.code == 429:
-                    key_quota_exhausted = True
-                    break
+                    time.sleep(1.5)
+                    continue
                 elif e.code == 503:
                     time.sleep(1)
-                continue
+                    continue
+                else:
+                    continue
             except Exception as e:
                 logger.warning(f"Error calling {model_name}: {e}")
-                last_error = str(e)
                 continue
 
-        if key_quota_exhausted and len(GEMINI_KEYS_LIST) > 1:
+        # Next key rotation
+        if len(GEMINI_KEYS_LIST) > 1:
             rotate_to_next_key()
-            continue
+            time.sleep(1)
 
-    return f"❌ AI सर्वर व्यस्त है ({last_error}), कृपया कुछ देर बाद पुनः प्रयास करें।"
+    return (
+        "<blockquote>"
+        "⏳ <b>सर्वर पर अत्यधिक लोड है!</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "कई छात्र एक साथ सवाल पूछ रहे हैं। कृपया <b>10-15 सेकंड</b> रुककर पुनः प्रयास करें! 🙏"
+        "</blockquote>"
+    )
 
 # ================= 3. OFFLINE QUIZ BANK =================
 DEFAULT_QUIZZES = [
