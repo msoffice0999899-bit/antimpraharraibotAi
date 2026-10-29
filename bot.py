@@ -46,15 +46,13 @@ try:
     BOT_USERNAME = f"@{BOT_INFO.username}".lower()
     logger.info(f"Bot loaded: {BOT_USERNAME} (ID: {BOT_ID})")
 except Exception as e:
-    logger.error(f"Failed to get bot info: {e}")
+    logger.warning(f"Failed to get bot info at startup: {e}")
 
-# High Rate-Limit Free Models - Ordered for maximum reliability & free quota
+# High Rate-Limit Rock Solid Models
 GEMINI_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-2.0-flash-lite-preview-02-05",
     "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
     "gemini-3.5-flash-lite"
 ]
 
@@ -118,41 +116,40 @@ def has_trigger_word(text):
             return True
     return False
 
-# ⭐⭐⭐ HTML SANITIZER & CONVERTER ⭐⭐⭐
+# ⭐⭐⭐ BULLET-PROOF HTML SANITIZER & CONVERTER ⭐⭐⭐
 def md_to_html(text):
     if not text:
         return text
     
+    # 1. Protect existing safe tags
     has_blockquote = "<blockquote>" in text.lower()
-    
     protected = []
     def protect_tag(match):
         protected.append(match.group(0))
-        return f"__PROTECTED_{len(protected)-1}__"
+        return f"__SAFE_TAG_{len(protected)-1}__"
     
-    # Protect valid HTML tags
     text = re.sub(r'</?(?:b|i|code|blockquote)>', protect_tag, text, flags=re.IGNORECASE)
     
-    # Escape special chars
-    text = text.replace("&", "&amp;")
-    text = text.replace("<", "&lt;")
-    text = text.replace(">", "&gt;")
+    # 2. Escape dangerous HTML chars
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     
+    # 3. Restore safe tags
     for idx, tag in enumerate(protected):
-        text = text.replace(f"__PROTECTED_{idx}__", tag)
+        text = text.replace(f"__SAFE_TAG_{idx}__", tag)
     
-    # Clean broken markdown lines
+    # 4. Clean broken markdown underlines/dashes into stylish dividers
     text = re.sub(r'[_]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
     text = re.sub(r'[-]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
     
-    # Convert markdown tags
+    # 5. Convert standard markdown formatting into Telegram HTML
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
-    text = re.sub(r'`(.+?)`', r'<b>\1</b>', text)
+    text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
     text = re.sub(r'^#{1,3}\s*(.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
     text = re.sub(r'^[\-]\s+', '🔹 ', text, flags=re.MULTILINE)
     text = re.sub(r'^\*\s+', '🔹 ', text, flags=re.MULTILINE)
 
+    # 6. Ensure blockquote wrapping for sleek card design
     if not has_blockquote:
         text = f"<blockquote>{text.strip()}</blockquote>"
     
@@ -166,17 +163,18 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
         else:
             bot.send_message(chat_id, html_text, parse_mode="HTML")
     except Exception as e:
-        logger.warning(f"HTML send failed with reply ({e}), trying fallback")
+        logger.warning(f"HTML send with reply failed ({e}), trying without reply...")
         try:
             bot.send_message(chat_id, html_text, parse_mode="HTML")
         except Exception as e2:
+            logger.warning(f"HTML send completely failed ({e2}), falling back to plain text...")
             plain = re.sub(r'<[^>]+>', '', html_text)
             try:
                 bot.send_message(chat_id, plain)
             except Exception as e3:
                 logger.error(f"Final send failed: {e3}")
 
-# ================= 2. GEMINI REST API (FAIL-SAFE 429 RECOVERY) =================
+# ================= 2. GEMINI REST API (FAIL-SAFE RECOVERY) =================
 def call_gemini(parts, system_instruction=None):
     total_keys = max(1, len(GEMINI_KEYS_LIST))
     
@@ -193,7 +191,6 @@ def call_gemini(parts, system_instruction=None):
         }
     encoded_data = json.dumps(payload).encode("utf-8")
 
-    # Sabhi keys aur sabhi models me try karenge
     for key_attempt in range(total_keys):
         active_key = get_current_api_key()
         if not active_key:
@@ -207,7 +204,7 @@ def call_gemini(parts, system_instruction=None):
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=20) as response:
+                with urllib.request.urlopen(req, timeout=18) as response:
                     result = json.loads(response.read().decode("utf-8"))
                     candidates = result.get("candidates", [])
                     if candidates:
@@ -218,28 +215,20 @@ def call_gemini(parts, system_instruction=None):
                             return final_text
             except urllib.error.HTTPError as e:
                 logger.warning(f"Key #{current_key_index + 1} | Model {model_name} HTTP {e.code}")
-                if e.code == 429:
-                    time.sleep(1.5)
-                    continue
-                elif e.code == 503:
-                    time.sleep(1)
-                    continue
-                else:
-                    continue
+                # 429/503 aane par turant agle model par jump karo
+                continue
             except Exception as e:
                 logger.warning(f"Error calling {model_name}: {e}")
                 continue
 
-        # Next key rotation
         if len(GEMINI_KEYS_LIST) > 1:
             rotate_to_next_key()
-            time.sleep(1)
 
     return (
         "<blockquote>"
-        "⏳ <b>सर्वर पर अत्यधिक लोड है!</b>\n"
+        "💡 <b>उत्तर प्राप्त नहीं हो सका!</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n"
-        "कई छात्र एक साथ सवाल पूछ रहे हैं। कृपया <b>10-15 सेकंड</b> रुककर पुनः प्रयास करें! 🙏"
+        "कृपया अपना प्रश्न थोड़ा और स्पष्ट लिखकर पूछें (उदा: <code>@Aantimpraharr_bot राइबोसोम का कार्य क्या है?</code>)"
         "</blockquote>"
     )
 
@@ -329,7 +318,10 @@ def send_group_id(message):
 
 @bot.message_handler(content_types=['new_chat_members'])
 def on_user_joins(message):
-    if any(m.id == BOT_ID for m in message.new_chat_members):
+    my_id = BOT_ID
+    if not my_id and BOT_INFO:
+        my_id = BOT_INFO.id
+    if my_id and any(m.id == my_id for m in message.new_chat_members):
         if not is_chat_allowed(message.chat.id):
             bot.send_message(message.chat.id, "❌ यह बॉट केवल अधिकृत स्टडी ग्रुप में कार्य करने के लिए आरक्षित है।")
             bot.leave_chat(message.chat.id)
@@ -529,12 +521,32 @@ def handle_text(message):
         elif rep.caption:
             quoted_content = f"प्रश्न कैप्शन: {rep.caption}"
 
-    # ⭐ AGAR TELEGRAM NE REPLY CONTENT BLANK DIYA HAI
+    # Generic phrase filter (jaise student ne sirf explain/samjhao likha)
+    generic_words = [
+        "explain", "explain in hindi", "explain hindi", "explain me", "samjhao", "batao", 
+        "solution", "solve", "?", "हल", "समझाओ", "बताओ", "hi", "hello", "bot", "please explain"
+    ]
+    is_empty_or_generic = clean_text.lower().strip() in generic_words or len(clean_text) <= 3
+
+    # ⭐ SCENARIO A: User ne direct message likha (kisi ko reply nahi kiya) aur sirf "explain in hindi" likha
+    if not rep and is_empty_or_generic:
+        guide_msg = (
+            "<blockquote>"
+            "👋 <b>नमस्ते! आपने कोई सवाल नहीं लिखा।</b>\n"
+            "━━━━━━━━━━━━━━━━━━━\n"
+            "💡 <b>मुझसे पूछने के 2 आसान तरीके:</b>\n\n"
+            "1. किसी भी क्विज़ या प्रश्न पर <b>स्वाइप (Reply)</b> करके लिखें: <code>explain</code>\n"
+            "2. या अपना सवाल पूरा लिखकर मुझे टैग करें:\n"
+            "   👉 <i>उदा: @Aantimpraharr_bot प्रकाश संश्लेषण क्या है?</i>\n"
+            "   👉 <i>उदा: @Aantimpraharr_bot RRB NTPC vacancy detail</i>"
+            "</blockquote>"
+        )
+        bot.reply_to(message, guide_msg, parse_mode="HTML")
+        return
+
+    # ⭐ SCENARIO B: User ne kisi Poll/Quiz par reply kiya par Telegram ne uska text forward nahi kiya
     if rep and not quoted_content:
-        simple_triggers = ["explain", "samjhao", "batao", "solution", "solve", "?", "हल", "समझाओ", "बताओ"]
-        is_only_trigger = clean_text.lower().strip() in simple_triggers or len(clean_text) <= 2
-        
-        if is_only_trigger:
+        if is_empty_or_generic:
             guide_msg = (
                 "<blockquote>"
                 "ℹ️ <b>क्विज़ डाउट गाइड:</b>\n"
@@ -542,7 +554,7 @@ def handle_text(message):
                 "Telegram इस पोल का प्रश्न फॉरवर्ड नहीं कर रहा है।\n\n"
                 "💡 <b>समाधान:</b>\n"
                 "1. स्वाइप करके प्रश्न का 1-2 मुख्य शब्द लिखें:\n"
-                "   👉 <i>उदा: explain राइबोसोम?</i>\n"
+                "   👉 <i>उदा: explain राइबोसोम in hindi</i>\n"
                 "2. या क्विज़ का <b>स्क्रीनशॉट / फोटो</b> भेजें!"
                 "</blockquote>"
             )
