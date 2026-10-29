@@ -56,24 +56,28 @@ GEMINI_MODELS = [
     "gemini-3.5-flash-lite"
 ]
 
+# ⭐⭐⭐ GLOBAL QUIZ CACHE (MAHIQUIZBOT & ALL POLLS) ⭐⭐⭐
+GLOBAL_QUIZ_CACHE = {}   # message_id -> {"question": ..., "options": [...], "correct": ...}
+
 def get_system_prompt():
     today_str = datetime.now().strftime("%d %B %Y")
     return (
         f"You are an elite, highly knowledgeable AI Study Tutor and Exam Specialist for Indian competitive exams (Railway RRB, SSC, State PSC, Police, Banking, Defence, UPSC).\n"
         f"Current Date: {today_str}.\n\n"
         "CORE STUDY & EXAM DIRECTIVES:\n"
-        "- Give 100% accurate, authentic, and conceptual answers based on standard reference material (NCERT, authentic history/science/polity/maths facts).\n"
-        "- If a student asks about vacancies (e.g., RRB NTPC, SSC, Railway) with an approximate year or typo (e.g. 'NTPC 2026'), understand the intent and relate to active notifications.\n\n"
+        "- When explaining a quiz question, clearly identify the correct option and explain WHY it is correct in crystal-clear simple Hindi / Hinglish.\n"
+        "- Break down complex terms into easy-to-understand student language.\n"
+        "- If a student asks 'explain in hindi' or 'samjh nahi aaya ache se batao', give a very intuitive, friendly, deep yet crisp explanation with real-life examples where applicable.\n\n"
         "TELEGRAM HTML DESIGN RULES:\n"
         "- Wrap the entire response in <blockquote>...</blockquote>.\n"
         "- Header: 🎯 <b>STUDY CAPSULE | अंतिम प्रहार™</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n\n"
-        "- First line: ✅ <b>प्रामाणिक उत्तर / हल:</b> [Direct crisp answer in bold]\n"
-        "- Next: 📌 <b>मुख्य बिंदु व स्पष्टीकरण:</b>\n"
+        "- First line: ✅ <b>प्रामाणिक उत्तर:</b> [State the direct correct option clearly in bold]\n"
+        "- Next: 📝 <b>सरल भाषा में व्याख्या:</b>\n"
         "- Use 3-4 bullet points starting with 🔹. Bold key keywords using <b>...</b>.\n"
         "- Use <i>italic</i> for English technical terms/dates.\n"
-        "- End with: ━━━━━━━━━━━━━━━━━━━\n💡 <b>याद रखने योग्य ट्रिक / टिप:</b> <i>[One-line powerful revision tip]</i>\n\n"
-        "- Keep it SHORT, CRISP, TO-THE-POINT.\n"
+        "- End with: ━━━━━━━━━━━━━━━━━━━\n💡 <b>याद रखने योग्य ट्रिक / मुख्य बिंदु:</b> <i>[One-line powerful revision tip]</i>\n\n"
+        "- Keep it CRISP, IMPACTFUL, NO unnecessary filler sentences.\n"
         "- ONLY use valid Telegram HTML: <blockquote>, <b>, <i>, <code>. Do NOT use markdown (** or __). Do NOT use <br> tags."
     )
 
@@ -82,6 +86,7 @@ AUTO_TRIGGERS = [
     "why", "answer", "uttar", "हल", "समझाओ", "बताओ", "स्पष्ट", "details", "?",
     "kya", "kyu", "kyun", "kyon", "kon", "kaun", "kab", "kaha",
     "bta", "btao", "smjhao", "smjha", "hint", "help", "vacancy", "form", "date",
+    "samjh", "samajh", "bataiye", "batao", "sahi", "galat",
     "क्यों", "क्या", "कौन", "कब", "कैसे", "कहाँ", "सही", "गलत", "वैकेंसी", "भर्ती"
 ]
 
@@ -121,7 +126,6 @@ def md_to_html(text):
     if not text:
         return text
     
-    # 1. Protect existing safe tags
     has_blockquote = "<blockquote>" in text.lower()
     protected = []
     def protect_tag(match):
@@ -129,19 +133,14 @@ def md_to_html(text):
         return f"__SAFE_TAG_{len(protected)-1}__"
     
     text = re.sub(r'</?(?:b|i|code|blockquote)>', protect_tag, text, flags=re.IGNORECASE)
-    
-    # 2. Escape dangerous HTML chars
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     
-    # 3. Restore safe tags
     for idx, tag in enumerate(protected):
         text = text.replace(f"__SAFE_TAG_{idx}__", tag)
     
-    # 4. Clean broken markdown underlines/dashes into stylish dividers
     text = re.sub(r'[_]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
     text = re.sub(r'[-]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
     
-    # 5. Convert standard markdown formatting into Telegram HTML
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
     text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
@@ -149,7 +148,6 @@ def md_to_html(text):
     text = re.sub(r'^[\-]\s+', '🔹 ', text, flags=re.MULTILINE)
     text = re.sub(r'^\*\s+', '🔹 ', text, flags=re.MULTILINE)
 
-    # 6. Ensure blockquote wrapping for sleek card design
     if not has_blockquote:
         text = f"<blockquote>{text.strip()}</blockquote>"
     
@@ -167,14 +165,13 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
         try:
             bot.send_message(chat_id, html_text, parse_mode="HTML")
         except Exception as e2:
-            logger.warning(f"HTML send completely failed ({e2}), falling back to plain text...")
             plain = re.sub(r'<[^>]+>', '', html_text)
             try:
                 bot.send_message(chat_id, plain)
             except Exception as e3:
                 logger.error(f"Final send failed: {e3}")
 
-# ================= 2. GEMINI REST API (FAIL-SAFE RECOVERY) =================
+# ================= 2. GEMINI REST API =================
 def call_gemini(parts, system_instruction=None):
     total_keys = max(1, len(GEMINI_KEYS_LIST))
     
@@ -215,7 +212,6 @@ def call_gemini(parts, system_instruction=None):
                             return final_text
             except urllib.error.HTTPError as e:
                 logger.warning(f"Key #{current_key_index + 1} | Model {model_name} HTTP {e.code}")
-                # 429/503 aane par turant agle model par jump karo
                 continue
             except Exception as e:
                 logger.warning(f"Error calling {model_name}: {e}")
@@ -226,9 +222,9 @@ def call_gemini(parts, system_instruction=None):
 
     return (
         "<blockquote>"
-        "💡 <b>उत्तर प्राप्त नहीं हो सका!</b>\n"
+        "💡 <b>उत्तर तैयार करने में तकनीकी समस्या आई!</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n"
-        "कृपया अपना प्रश्न थोड़ा और स्पष्ट लिखकर पूछें (उदा: <code>@Aantimpraharr_bot राइबोसोम का कार्य क्या है?</code>)"
+        "कृपया 5 सेकंड बाद पुनः स्वाइप (Reply) करके <code>explain</code> लिखें।"
         "</blockquote>"
     )
 
@@ -281,9 +277,6 @@ try:
 except Exception as e:
     logger.warning(f"Using default quiz bank: {e}")
 
-# Quiz Poll Tracking
-POLL_TRACKER = {}
-
 # ================= 4. RENDER 24/7 WEB SERVER =================
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -311,6 +304,28 @@ def run_health_server():
 threading.Thread(target=run_health_server, daemon=True).start()
 
 # ================= 5. TELEGRAM BOT HANDLERS =================
+
+# ⭐⭐⭐ 1. LIVE POLL LISTENER (MAHIQUIZBOT & ANY POLL AUTO-CAPTURE) ⭐⭐⭐
+@bot.message_handler(content_types=['poll'])
+def auto_capture_group_polls(message):
+    try:
+        p = message.poll
+        opts = [opt.text for opt in p.options]
+        correct_opt = ""
+        if hasattr(p, 'correct_option_id') and p.correct_option_id is not None:
+            if p.correct_option_id < len(opts):
+                correct_opt = opts[p.correct_option_id]
+
+        GLOBAL_QUIZ_CACHE[message.message_id] = {
+            "question": p.question,
+            "options": opts,
+            "correct": correct_opt,
+            "explanation": getattr(p, 'explanation', ''),
+            "from_user": message.from_user.first_name if message.from_user else "QuizBot"
+        }
+        logger.info(f"Captured Poll #{message.message_id}: {p.question[:50]}...")
+    except Exception as e:
+        logger.error(f"Error capturing poll: {e}")
 
 @bot.message_handler(commands=['id', 'groupid'])
 def send_group_id(message):
@@ -347,7 +362,7 @@ def send_welcome(message):
         "✨ <b>कमांड्स और फीचर्स:</b>\n"
         "🔹 /quiz — महत्वपूर्ण क्विज़ हल करें\n"
         "🔹 /ask &lt;सवाल&gt; — कोई भी डाउट या वैकेंसी अपडेट पूछें\n"
-        "🔹 <b>Reply Feature:</b> किसी भी प्रश्न, फोटो या क्विज़ पर स्वाइप करके सवाल पूछें!\n"
+        "🔹 <b>Reply Feature:</b> किसी भी क्विज़ पोल (MAHIQUIZBOT आदि) पर स्वाइप करके लिखें: <code>explain in hindi</code> या <code>समझाओ</code> — बॉट पूरा हल देगा!\n"
         "🔹 <b>Photo Solver:</b> सवाल की फोटो भेजें, बॉट तुरंत हल देगा 📸\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         "⚡ <i>24/7 Active AI Study Partner</i>"
@@ -371,8 +386,14 @@ def send_quiz(message):
             explanation=q.get("explanation", ""),
             is_anonymous=False
         )
-        POLL_TRACKER[sent.message_id] = q
-        logger.info(f"Quiz sent and tracked: msg_id={sent.message_id}")
+        GLOBAL_QUIZ_CACHE[sent.message_id] = {
+            "question": q["question"],
+            "options": q["options"],
+            "correct": q["options"][q["correct_option_id"]],
+            "explanation": q.get("explanation", ""),
+            "from_user": BOT_USERNAME
+        }
+        logger.info(f"Quiz sent & cached: msg_id={sent.message_id}")
     except Exception as e:
         logger.error(f"Quiz send error: {e}")
         bot.reply_to(message, "⚠️ क्विज़ भेजने में समस्या हुई। कृपया दोबारा प्रयास करें।")
@@ -440,7 +461,7 @@ def handle_photo(message):
         except:
             pass
 
-# ⭐⭐⭐ MAIN TEXT HANDLER ⭐⭐⭐
+# ⭐⭐⭐ MAIN TEXT HANDLER: REPLIES & QUESTIONS ⭐⭐⭐
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     if message.chat.type == "private" or not is_chat_allowed(message.chat.id):
@@ -506,36 +527,47 @@ def handle_text(message):
                 pass
         return
 
-    # ⭐ CASE 2: QUIZ POLL / TEXT REPLY
+    # ⭐ CASE 2: QUIZ / POLL / TEXT REPLY (MAHIQUIZBOT INTEGRATION)
     quoted_content = ""
     if rep:
-        if rep.poll:
-            opts = ", ".join([opt.text for opt in rep.poll.options])
-            quoted_content = f"क्विज़ पोल प्रश्न: {rep.poll.question}\nदिए गए विकल्प: {opts}"
-        elif rep.message_id in POLL_TRACKER:
-            q_data = POLL_TRACKER[rep.message_id]
-            opts = ", ".join(q_data["options"])
-            quoted_content = f"क्विज़ पोल प्रश्न: {q_data['question']}\nदिए गए विकल्प: {opts}"
-        elif rep.text:
-            quoted_content = f"प्रश्न / मैसेज: {rep.text}"
-        elif rep.caption:
-            quoted_content = f"प्रश्न कैप्शन: {rep.caption}"
+        # A. Agar Global Cache me Poll ka data mil gaya (MAHIQUIZBOT ya koi bhi poll)
+        if rep.message_id in GLOBAL_QUIZ_CACHE:
+            q_data = GLOBAL_QUIZ_CACHE[rep.message_id]
+            opts_str = ", ".join(q_data["options"])
+            quoted_content = f"क्विज़ पोल प्रश्न: {q_data['question']}\nविकल्प: {opts_str}"
+            if q_data.get("correct"):
+                quoted_content += f"\nमार्क किया गया उत्तर: {q_data['correct']}"
+            if q_data.get("explanation"):
+                quoted_content += f"\nनोट्स/संकेत: {q_data['explanation']}"
+            logger.info(f"Successfully matched replied poll from cache: #{rep.message_id}")
 
-    # Generic phrase filter (jaise student ne sirf explain/samjhao likha)
+        # B. Agar Telegram ne direct poll data provide kiya
+        elif rep.poll:
+            opts = ", ".join([opt.text for opt in rep.poll.options])
+            quoted_content = f"क्विज़ पोल प्रश्न: {rep.poll.question}\nविकल्प: {opts}"
+
+        # C. Agar Text message par reply kiya
+        elif rep.text:
+            quoted_content = f"संदर्भ प्रश्न/मैसेज: {rep.text}"
+        elif rep.caption:
+            quoted_content = f"संदर्भ कैप्शन: {rep.caption}"
+
+    # Generic phrase filter
     generic_words = [
         "explain", "explain in hindi", "explain hindi", "explain me", "samjhao", "batao", 
-        "solution", "solve", "?", "हल", "समझाओ", "बताओ", "hi", "hello", "bot", "please explain"
+        "solution", "solve", "?", "हल", "समझाओ", "बताओ", "hi", "hello", "bot", "please explain",
+        "mujhe samjh nhi aya tum ache se batao", "samajh nahi aaya", "ache se samjhao"
     ]
     is_empty_or_generic = clean_text.lower().strip() in generic_words or len(clean_text) <= 3
 
-    # ⭐ SCENARIO A: User ne direct message likha (kisi ko reply nahi kiya) aur sirf "explain in hindi" likha
+    # ⭐ Agar user ne bina kisi context/reply ke direct sirf "explain in hindi" likha
     if not rep and is_empty_or_generic:
         guide_msg = (
             "<blockquote>"
             "👋 <b>नमस्ते! आपने कोई सवाल नहीं लिखा।</b>\n"
             "━━━━━━━━━━━━━━━━━━━\n"
             "💡 <b>मुझसे पूछने के 2 आसान तरीके:</b>\n\n"
-            "1. किसी भी क्विज़ या प्रश्न पर <b>स्वाइप (Reply)</b> करके लिखें: <code>explain</code>\n"
+            "1. किसी भी क्विज़ या प्रश्न पर <b>स्वाइप (Reply)</b> करके लिखें: <code>explain in hindi</code>\n"
             "2. या अपना सवाल पूरा लिखकर मुझे टैग करें:\n"
             "   👉 <i>उदा: @Aantimpraharr_bot प्रकाश संश्लेषण क्या है?</i>\n"
             "   👉 <i>उदा: @Aantimpraharr_bot RRB NTPC vacancy detail</i>"
@@ -544,29 +576,30 @@ def handle_text(message):
         bot.reply_to(message, guide_msg, parse_mode="HTML")
         return
 
-    # ⭐ SCENARIO B: User ne kisi Poll/Quiz par reply kiya par Telegram ne uska text forward nahi kiya
+    # ⭐ Agar Poll par reply kiya par bot restart hone ki wajah se cache me nahi tha
     if rep and not quoted_content:
-        if is_empty_or_generic:
-            guide_msg = (
-                "<blockquote>"
-                "ℹ️ <b>क्विज़ डाउट गाइड:</b>\n"
-                "━━━━━━━━━━━━━━━━━━━\n"
-                "Telegram इस पोल का प्रश्न फॉरवर्ड नहीं कर रहा है।\n\n"
-                "💡 <b>समाधान:</b>\n"
-                "1. स्वाइप करके प्रश्न का 1-2 मुख्य शब्द लिखें:\n"
-                "   👉 <i>उदा: explain राइबोसोम in hindi</i>\n"
-                "2. या क्विज़ का <b>स्क्रीनशॉट / फोटो</b> भेजें!"
-                "</blockquote>"
-            )
-            bot.reply_to(message, guide_msg, parse_mode="HTML")
-            return
-        else:
-            query = clean_text
-    elif quoted_content:
+        guide_msg = (
+            "<blockquote>"
+            "ℹ️ <b>क्विज़ डाउट समाधान:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━\n"
+            "Telegram प्राइवेसी के कारण इस पुराने पोल का टेक्स्ट फॉरवर्ड नहीं हुआ।\n\n"
+            "💡 <b>तुरंत उत्तर पाने के लिए:</b>\n"
+            "1. स्वाइप करके प्रश्न का 1-2 मुख्य शब्द लिखें:\n"
+            "   👉 <i>उदा: explain राइबोसोम in hindi</i>\n"
+            "2. या इस क्विज़ का <b>स्क्रीनशॉट (फोटो)</b> भेजें! 📸"
+            "</blockquote>"
+        )
+        bot.reply_to(message, guide_msg, parse_mode="HTML")
+        return
+
+    # Final prompt preparation
+    if quoted_content:
+        user_demand = clean_text if clean_text else "कृपया इस प्रश्न का सही उत्तर पहचानें और बहुत ही सरल, आसान हिंदी में विस्तार से समझाएं।"
         query = (
-            f"छात्र ने निम्नलिखित प्रश्न/विषय पर सहायता मांगी है। कृपया सटीक व प्रामाणिक जानकारी दें:\n\n"
+            f"छात्र ने ग्रुप में निम्नलिखित क्विज़/प्रश्न पर सहायता मांगी है:\n\n"
             f"{quoted_content}\n\n"
-            f"छात्र का विशेष अनुरोध: {clean_text if clean_text else 'कृपया प्रामाणिक सही उत्तर और मुख्य बिंदु बताएं।'}"
+            f"छात्र का अनुरोध: {user_demand}\n\n"
+            f"निर्देश: छात्र के लिए बिल्कुल आसान और रोचक हिंदी में समझाइए ताकि एक बार में कॉन्सेप्ट समझ आ जाए।"
         )
     else:
         query = clean_text
