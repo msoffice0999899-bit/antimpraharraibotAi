@@ -51,8 +51,8 @@ except Exception as e:
 # ⭐ OCTOBER 2026 — VERIFIED FREE TIER MODELS
 GEMINI_MODELS = [
     "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
+    "gemini-3.7-flash",
+    "gemini-3.5-flash-lite",
 ]
 
 # ⭐ GLOBAL QUIZ CACHE
@@ -201,7 +201,7 @@ def call_gemini(parts, system_instruction=None):
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=12) as response:
+                with urllib.request.urlopen(req, timeout=30) as response:
                     result = json.loads(response.read().decode("utf-8"))
                     candidates = result.get("candidates", [])
                     if candidates:
@@ -210,10 +210,8 @@ def call_gemini(parts, system_instruction=None):
                         final_text = "".join(text_parts).strip()
                         if final_text:
                             return final_text
-                    # Empty candidates — try next model
                     detailed_errors.append(f"{model_name}: empty response")
             except urllib.error.HTTPError as e:
-                # Read the actual error body for detailed debugging
                 err_body = ""
                 try:
                     err_body = e.read().decode("utf-8", errors="replace")[:200]
@@ -223,7 +221,6 @@ def call_gemini(parts, system_instruction=None):
                 detailed_errors.append(err_msg)
                 logger.warning(f"Key #{current_key_index + 1} | {err_msg} | Body: {err_body}")
 
-                # If 429 (rate limit), wait briefly and try next model
                 if e.code == 429:
                     time.sleep(1)
                 continue
@@ -235,7 +232,6 @@ def call_gemini(parts, system_instruction=None):
         if len(GEMINI_KEYS_LIST) > 1:
             rotate_to_next_key()
 
-    # All models on all keys failed
     err_summary = " | ".join(detailed_errors[-3:]) if detailed_errors else "Unknown"
     logger.error(f"ALL MODELS FAILED. Errors: {err_summary}")
     return (
@@ -542,8 +538,6 @@ def handle_text(message):
 
     clean_text = text
     if BOT_USERNAME:
-        clean_text = clean_text.lower().replace(BOT_USERNAME, "").strip()
-        # Restore original case by removing bot tag from original text
         clean_text = re.sub(re.escape(BOT_USERNAME), "", text, flags=re.IGNORECASE).strip()
     if BOT_INFO:
         clean_text = re.sub(re.escape(f"@{BOT_INFO.username}"), "", clean_text, flags=re.IGNORECASE).strip()
