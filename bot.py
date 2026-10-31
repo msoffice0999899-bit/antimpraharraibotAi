@@ -51,9 +51,8 @@ except Exception as e:
 # ⭐ OCTOBER 2026 — VERIFIED FREE TIER MODELS
 GEMINI_MODELS = [
     "gemini-3.8-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-1.5-flash",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
 ]
 
 # ⭐ GLOBAL QUIZ CACHE
@@ -202,7 +201,7 @@ def call_gemini(parts, system_instruction=None):
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=25) as response:
+                with urllib.request.urlopen(req, timeout=12) as response:
                     result = json.loads(response.read().decode("utf-8"))
                     candidates = result.get("candidates", [])
                     if candidates:
@@ -226,7 +225,7 @@ def call_gemini(parts, system_instruction=None):
 
                 # If 429 (rate limit), wait briefly and try next model
                 if e.code == 429:
-                    time.sleep(2)
+                    time.sleep(1)
                 continue
             except Exception as e:
                 detailed_errors.append(f"{model_name}: {str(e)[:50]}")
