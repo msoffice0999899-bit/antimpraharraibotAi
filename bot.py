@@ -48,16 +48,16 @@ try:
 except Exception as e:
     logger.warning(f"Failed to get bot info at startup: {e}")
 
-# High Rate-Limit Rock Solid Models
+# ⭐ OCTOBER 2026 — VERIFIED FREE TIER MODELS
 GEMINI_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
     "gemini-1.5-flash",
-    "gemini-3.5-flash-lite"
 ]
 
-# ⭐⭐⭐ GLOBAL QUIZ CACHE (MAHIQUIZBOT & ALL POLLS) ⭐⭐⭐
-GLOBAL_QUIZ_CACHE = {}   # message_id -> {"question": ..., "options": [...], "correct": ...}
+# ⭐ GLOBAL QUIZ CACHE
+GLOBAL_QUIZ_CACHE = {}
 
 def get_system_prompt():
     today_str = datetime.now().strftime("%d %B %Y")
@@ -65,9 +65,8 @@ def get_system_prompt():
         f"You are an elite, highly knowledgeable AI Study Tutor and Exam Specialist for Indian competitive exams (Railway RRB, SSC, State PSC, Police, Banking, Defence, UPSC).\n"
         f"Current Date: {today_str}.\n\n"
         "CORE STUDY & EXAM DIRECTIVES:\n"
-        "- When explaining a quiz question, clearly identify the correct option and explain WHY it is correct in crystal-clear simple Hindi / Hinglish.\n"
-        "- Break down complex terms into easy-to-understand student language.\n"
-        "- If a student asks 'explain in hindi' or 'samjh nahi aaya ache se batao', give a very intuitive, friendly, deep yet crisp explanation with real-life examples where applicable.\n\n"
+        "- When explaining a quiz question, clearly identify the correct option and explain WHY it is correct in simple, interesting Hindi / Hinglish.\n"
+        "- Break down complex historical/scientific terms into easy student language.\n\n"
         "TELEGRAM HTML DESIGN RULES:\n"
         "- Wrap the entire response in <blockquote>...</blockquote>.\n"
         "- Header: 🎯 <b>STUDY CAPSULE | अंतिम प्रहार™</b>\n"
@@ -82,11 +81,11 @@ def get_system_prompt():
     )
 
 AUTO_TRIGGERS = [
-    "explain", "samjhao", "batao", "solution", "solve", "kaise", 
+    "explain", "samjhao", "batao", "solution", "solve", "kaise",
     "why", "answer", "uttar", "हल", "समझाओ", "बताओ", "स्पष्ट", "details", "?",
     "kya", "kyu", "kyun", "kyon", "kon", "kaun", "kab", "kaha",
     "bta", "btao", "smjhao", "smjha", "hint", "help", "vacancy", "form", "date",
-    "samjh", "samajh", "bataiye", "batao", "sahi", "galat",
+    "samjh", "samajh", "bataiye", "sahi", "galat",
     "क्यों", "क्या", "कौन", "कब", "कैसे", "कहाँ", "सही", "गलत", "वैकेंसी", "भर्ती"
 ]
 
@@ -121,26 +120,26 @@ def has_trigger_word(text):
             return True
     return False
 
-# ⭐⭐⭐ BULLET-PROOF HTML SANITIZER & CONVERTER ⭐⭐⭐
+# ⭐⭐⭐ HTML SANITIZER & CONVERTER ⭐⭐⭐
 def md_to_html(text):
     if not text:
         return text
-    
+
     has_blockquote = "<blockquote>" in text.lower()
     protected = []
     def protect_tag(match):
         protected.append(match.group(0))
         return f"__SAFE_TAG_{len(protected)-1}__"
-    
+
     text = re.sub(r'</?(?:b|i|code|blockquote)>', protect_tag, text, flags=re.IGNORECASE)
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    
+
     for idx, tag in enumerate(protected):
         text = text.replace(f"__SAFE_TAG_{idx}__", tag)
-    
+
     text = re.sub(r'[_]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
     text = re.sub(r'[-]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
-    
+
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
     text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
@@ -150,7 +149,7 @@ def md_to_html(text):
 
     if not has_blockquote:
         text = f"<blockquote>{text.strip()}</blockquote>"
-    
+
     return text.strip()
 
 def safe_send_html(chat_id, text, reply_to_message_id=None):
@@ -161,7 +160,7 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
         else:
             bot.send_message(chat_id, html_text, parse_mode="HTML")
     except Exception as e:
-        logger.warning(f"HTML send with reply failed ({e}), trying without reply...")
+        logger.warning(f"HTML send failed ({e}), trying fallback")
         try:
             bot.send_message(chat_id, html_text, parse_mode="HTML")
         except Exception as e2:
@@ -171,14 +170,14 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
             except Exception as e3:
                 logger.error(f"Final send failed: {e3}")
 
-# ================= 2. GEMINI REST API =================
+# ================= 2. GEMINI REST API (DEEP ERROR LOGGING) =================
 def call_gemini(parts, system_instruction=None):
     total_keys = max(1, len(GEMINI_KEYS_LIST))
-    
+
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "maxOutputTokens": 600,
+            "maxOutputTokens": 700,
             "temperature": 0.3
         }
     }
@@ -188,10 +187,12 @@ def call_gemini(parts, system_instruction=None):
         }
     encoded_data = json.dumps(payload).encode("utf-8")
 
+    detailed_errors = []
+
     for key_attempt in range(total_keys):
         active_key = get_current_api_key()
         if not active_key:
-            return "⚠️ कोई Gemini API Key उपलब्ध नहीं है।"
+            return "⚠️ Render में कोई Gemini API Key नहीं मिली। कृपया GEMINI_API_KEY सेट करें।"
 
         for model_name in GEMINI_MODELS:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key}"
@@ -201,7 +202,7 @@ def call_gemini(parts, system_instruction=None):
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=18) as response:
+                with urllib.request.urlopen(req, timeout=25) as response:
                     result = json.loads(response.read().decode("utf-8"))
                     candidates = result.get("candidates", [])
                     if candidates:
@@ -210,20 +211,39 @@ def call_gemini(parts, system_instruction=None):
                         final_text = "".join(text_parts).strip()
                         if final_text:
                             return final_text
+                    # Empty candidates — try next model
+                    detailed_errors.append(f"{model_name}: empty response")
             except urllib.error.HTTPError as e:
-                logger.warning(f"Key #{current_key_index + 1} | Model {model_name} HTTP {e.code}")
+                # Read the actual error body for detailed debugging
+                err_body = ""
+                try:
+                    err_body = e.read().decode("utf-8", errors="replace")[:200]
+                except Exception:
+                    pass
+                err_msg = f"{model_name}: HTTP {e.code}"
+                detailed_errors.append(err_msg)
+                logger.warning(f"Key #{current_key_index + 1} | {err_msg} | Body: {err_body}")
+
+                # If 429 (rate limit), wait briefly and try next model
+                if e.code == 429:
+                    time.sleep(2)
                 continue
             except Exception as e:
+                detailed_errors.append(f"{model_name}: {str(e)[:50]}")
                 logger.warning(f"Error calling {model_name}: {e}")
                 continue
 
         if len(GEMINI_KEYS_LIST) > 1:
             rotate_to_next_key()
 
+    # All models on all keys failed
+    err_summary = " | ".join(detailed_errors[-3:]) if detailed_errors else "Unknown"
+    logger.error(f"ALL MODELS FAILED. Errors: {err_summary}")
     return (
         "<blockquote>"
         "💡 <b>उत्तर तैयार करने में तकनीकी समस्या आई!</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ <i>{err_summary}</i>\n\n"
         "कृपया 5 सेकंड बाद पुनः स्वाइप (Reply) करके <code>explain</code> लिखें।"
         "</blockquote>"
     )
@@ -283,7 +303,14 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write(b"Telegram AI Study Bot is alive and running on Render!")
+        status_msg = (
+            f"Bot: {BOT_USERNAME}\n"
+            f"Keys: {len(GEMINI_KEYS_LIST)}\n"
+            f"Models: {', '.join(GEMINI_MODELS)}\n"
+            f"Cache: {len(GLOBAL_QUIZ_CACHE)} polls\n"
+            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        self.wfile.write(status_msg.encode("utf-8"))
 
     def do_HEAD(self):
         self.send_response(200)
@@ -305,7 +332,7 @@ threading.Thread(target=run_health_server, daemon=True).start()
 
 # ================= 5. TELEGRAM BOT HANDLERS =================
 
-# ⭐⭐⭐ 1. LIVE POLL LISTENER (MAHIQUIZBOT & ANY POLL AUTO-CAPTURE) ⭐⭐⭐
+# ⭐ LIVE POLL LISTENER (MAHIQUIZBOT & ANY POLL AUTO-CAPTURE)
 @bot.message_handler(content_types=['poll'])
 def auto_capture_group_polls(message):
     try:
@@ -324,6 +351,12 @@ def auto_capture_group_polls(message):
             "from_user": message.from_user.first_name if message.from_user else "QuizBot"
         }
         logger.info(f"Captured Poll #{message.message_id}: {p.question[:50]}...")
+
+        # Trim cache to prevent memory overflow (keep last 200 polls)
+        if len(GLOBAL_QUIZ_CACHE) > 200:
+            oldest_keys = sorted(GLOBAL_QUIZ_CACHE.keys())[:50]
+            for k in oldest_keys:
+                del GLOBAL_QUIZ_CACHE[k]
     except Exception as e:
         logger.error(f"Error capturing poll: {e}")
 
@@ -361,8 +394,8 @@ def send_welcome(message):
         "━━━━━━━━━━━━━━━━━━━\n"
         "✨ <b>कमांड्स और फीचर्स:</b>\n"
         "🔹 /quiz — महत्वपूर्ण क्विज़ हल करें\n"
-        "🔹 /ask &lt;सवाल&gt; — कोई भी डाउट या वैकेंसी अपडेट पूछें\n"
-        "🔹 <b>Reply Feature:</b> किसी भी क्विज़ पोल (MAHIQUIZBOT आदि) पर स्वाइप करके लिखें: <code>explain in hindi</code> या <code>समझाओ</code> — बॉट पूरा हल देगा!\n"
+        "🔹 /ask &lt;सवाल&gt; — कोई भी डाउट पूछें\n"
+        "🔹 <b>Reply Feature:</b> MAHIQUIZBOT या किसी भी क्विज़ पर स्वाइप करके लिखें: <code>explain in hindi</code> — बॉट पूरा हल देगा!\n"
         "🔹 <b>Photo Solver:</b> सवाल की फोटो भेजें, बॉट तुरंत हल देगा 📸\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         "⚡ <i>24/7 Active AI Study Partner</i>"
@@ -405,10 +438,28 @@ def handle_ask(message):
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        bot.reply_to(message, "कृपया सवाल भी लिखें। उदाहरण:\n<code>/ask RRB NTPC vacancy update</code>", parse_mode="HTML")
+        bot.reply_to(message, "कृपया सवाल भी लिखें। उदाहरण:\n<code>/ask प्रकाश संश्लेषण क्या है?</code>", parse_mode="HTML")
         return
     query = parts[1].strip()
     answer_text_query(message, query)
+
+# ⭐ Debug command — check model and key status
+@bot.message_handler(commands=['debug'])
+def handle_debug(message):
+    if message.chat.type == "private":
+        return
+    info = (
+        f"<blockquote>"
+        f"🔧 <b>Bot Debug Info</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 Bot: <code>{BOT_USERNAME}</code>\n"
+        f"🔑 API Keys loaded: <b>{len(GEMINI_KEYS_LIST)}</b>\n"
+        f"🧠 Models: <code>{', '.join(GEMINI_MODELS)}</code>\n"
+        f"📊 Quiz Cache: <b>{len(GLOBAL_QUIZ_CACHE)}</b> polls\n"
+        f"🕐 Server Time: <i>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
+        f"</blockquote>"
+    )
+    bot.reply_to(message, info, parse_mode="HTML")
 
 # सीधे फोटो भेजने पर (Direct Photo)
 @bot.message_handler(content_types=['photo'])
@@ -419,8 +470,8 @@ def handle_photo(message):
     caption = message.caption or ""
 
     is_bot_tagged = is_tagged(caption)
-    is_reply_to_bot = (message.reply_to_message and 
-                       message.reply_to_message.from_user and 
+    is_reply_to_bot = (message.reply_to_message and
+                       message.reply_to_message.from_user and
                        message.reply_to_message.from_user.id == BOT_ID)
 
     if not (is_bot_tagged or is_reply_to_bot or caption.lower().startswith("/ask")):
@@ -429,7 +480,7 @@ def handle_photo(message):
     status = bot.reply_to(message, "🔍 <i>फोटो व तथ्यों का विश्लेषण किया जा रहा है...</i>", parse_mode="HTML")
     try:
         bot.send_chat_action(message.chat.id, "typing")
-        
+
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded = bot.download_file(file_info.file_path)
         base64_img = base64.b64encode(downloaded).decode("utf-8")
@@ -469,25 +520,35 @@ def handle_text(message):
 
     text = message.text or ""
     text_lower = text.lower().strip()
-    
+
     bot_tagged = is_tagged(text)
     has_reply = bool(message.reply_to_message)
     has_trigger = has_trigger_word(text)
 
+    # ⭐ DECISION: When to respond
+    # 1) Bot is tagged → always respond
+    # 2) Reply to any message + has trigger word → respond
+    # 3) Reply to bot's own message → always respond
     should_respond = False
-    
+
     if bot_tagged:
         should_respond = True
-    elif has_reply:
+    elif has_reply and has_trigger:
+        should_respond = True
+    elif has_reply and message.reply_to_message.from_user and message.reply_to_message.from_user.id == BOT_ID:
         should_respond = True
 
     if not should_respond:
         return
-    
-    clean_text = text.replace(BOT_USERNAME, "").replace(BOT_USERNAME.replace("@", ""), "").strip()
+
+    clean_text = text
+    if BOT_USERNAME:
+        clean_text = clean_text.lower().replace(BOT_USERNAME, "").strip()
+        # Restore original case by removing bot tag from original text
+        clean_text = re.sub(re.escape(BOT_USERNAME), "", text, flags=re.IGNORECASE).strip()
     if BOT_INFO:
-        clean_text = clean_text.replace(f"@{BOT_INFO.username}", "").strip()
-    
+        clean_text = re.sub(re.escape(f"@{BOT_INFO.username}"), "", clean_text, flags=re.IGNORECASE).strip()
+
     rep = message.reply_to_message
 
     # ⭐ CASE 1: PHOTO REPLY
@@ -530,23 +591,24 @@ def handle_text(message):
     # ⭐ CASE 2: QUIZ / POLL / TEXT REPLY (MAHIQUIZBOT INTEGRATION)
     quoted_content = ""
     if rep:
-        # A. Agar Global Cache me Poll ka data mil gaya (MAHIQUIZBOT ya koi bhi poll)
-        if rep.message_id in GLOBAL_QUIZ_CACHE:
-            q_data = GLOBAL_QUIZ_CACHE[rep.message_id]
+        # A. Check Global Cache for Poll data (MAHIQUIZBOT or any poll)
+        rep_id = rep.message_id
+        if rep_id in GLOBAL_QUIZ_CACHE:
+            q_data = GLOBAL_QUIZ_CACHE[rep_id]
             opts_str = ", ".join(q_data["options"])
             quoted_content = f"क्विज़ पोल प्रश्न: {q_data['question']}\nविकल्प: {opts_str}"
             if q_data.get("correct"):
                 quoted_content += f"\nमार्क किया गया उत्तर: {q_data['correct']}"
             if q_data.get("explanation"):
                 quoted_content += f"\nनोट्स/संकेत: {q_data['explanation']}"
-            logger.info(f"Successfully matched replied poll from cache: #{rep.message_id}")
+            logger.info(f"Successfully matched replied poll from cache: #{rep_id}")
 
-        # B. Agar Telegram ne direct poll data provide kiya
+        # B. If Telegram provided direct poll data
         elif rep.poll:
             opts = ", ".join([opt.text for opt in rep.poll.options])
             quoted_content = f"क्विज़ पोल प्रश्न: {rep.poll.question}\nविकल्प: {opts}"
 
-        # C. Agar Text message par reply kiya
+        # C. Text message reply
         elif rep.text:
             quoted_content = f"संदर्भ प्रश्न/मैसेज: {rep.text}"
         elif rep.caption:
@@ -554,13 +616,14 @@ def handle_text(message):
 
     # Generic phrase filter
     generic_words = [
-        "explain", "explain in hindi", "explain hindi", "explain me", "samjhao", "batao", 
+        "explain", "explain in hindi", "explain hindi", "explain me", "samjhao", "batao",
         "solution", "solve", "?", "हल", "समझाओ", "बताओ", "hi", "hello", "bot", "please explain",
-        "mujhe samjh nhi aya tum ache se batao", "samajh nahi aaya", "ache se samjhao"
+        "mujhe samjh nhi aya tum ache se batao", "samajh nahi aaya", "ache se samjhao",
+        "bata do", "samjha do", "explain karo", "hindi me batao", "hindi me samjhao"
     ]
     is_empty_or_generic = clean_text.lower().strip() in generic_words or len(clean_text) <= 3
 
-    # ⭐ Agar user ne bina kisi context/reply ke direct sirf "explain in hindi" likha
+    # ⭐ If user tagged bot without any context/reply and with only generic text
     if not rep and is_empty_or_generic:
         guide_msg = (
             "<blockquote>"
@@ -569,14 +632,14 @@ def handle_text(message):
             "💡 <b>मुझसे पूछने के 2 आसान तरीके:</b>\n\n"
             "1. किसी भी क्विज़ या प्रश्न पर <b>स्वाइप (Reply)</b> करके लिखें: <code>explain in hindi</code>\n"
             "2. या अपना सवाल पूरा लिखकर मुझे टैग करें:\n"
-            "   👉 <i>उदा: @Aantimpraharr_bot प्रकाश संश्लेषण क्या है?</i>\n"
-            "   👉 <i>उदा: @Aantimpraharr_bot RRB NTPC vacancy detail</i>"
+            f"   👉 <i>उदा: {BOT_USERNAME} प्रकाश संश्लेषण क्या है?</i>\n"
+            f"   👉 <i>उदा: {BOT_USERNAME} RRB NTPC vacancy detail</i>"
             "</blockquote>"
         )
         bot.reply_to(message, guide_msg, parse_mode="HTML")
         return
 
-    # ⭐ Agar Poll par reply kiya par bot restart hone ki wajah se cache me nahi tha
+    # ⭐ If replied to a message but no content was extracted (old poll, cache miss)
     if rep and not quoted_content:
         guide_msg = (
             "<blockquote>"
@@ -585,7 +648,7 @@ def handle_text(message):
             "Telegram प्राइवेसी के कारण इस पुराने पोल का टेक्स्ट फॉरवर्ड नहीं हुआ।\n\n"
             "💡 <b>तुरंत उत्तर पाने के लिए:</b>\n"
             "1. स्वाइप करके प्रश्न का 1-2 मुख्य शब्द लिखें:\n"
-            "   👉 <i>उदा: explain राइबोसोम in hindi</i>\n"
+            "   👉 <i>उदा: explain महाजनपद in hindi</i>\n"
             "2. या इस क्विज़ का <b>स्क्रीनशॉट (फोटो)</b> भेजें! 📸"
             "</blockquote>"
         )
@@ -625,6 +688,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print(f"✅ Bot successfully running as: {BOT_USERNAME} (ID: {BOT_ID})")
     print(f"🔑 Loaded {len(GEMINI_KEYS_LIST)} Gemini API Key(s) from Environment Variables")
+    print(f"🧠 Models: {', '.join(GEMINI_MODELS)}")
     print(f"🔒 Group Whitelisting Active: {ALLOWED_GROUP_IDS if ALLOWED_GROUP_IDS else 'All Groups Allowed'}")
     print(f"🌐 Health server running on port {PORT} for Render 24/7 hosting")
     print("=" * 50)
