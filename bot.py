@@ -21,12 +21,12 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 PORT = int(os.environ.get("PORT", "8080"))
 
-# Multi-Key Rotation: Render Environment Variables
+# Multi-Key Rotation
 RAW_KEYS = os.environ.get("GEMINI_API_KEYS", "") or os.environ.get("GEMINI_API_KEY", "")
-GEMINI_KEYS_LIST = [k.strip() for k in RAW_KEYS.split(",") if k.strip()]
+GEMINI_KEYS_LIST = [k.strip().strip('"\'') for k in RAW_KEYS.split(",") if k.strip()]
 current_key_index = 0
 
-# Allowed Group IDs (खाली होने पर सभी ग्रुप्स में चलेगा)
+# Allowed Group IDs
 ALLOWED_GROUP_IDS_STR = os.environ.get("ALLOWED_GROUP_IDS", "").strip()
 ALLOWED_GROUP_IDS = [gid.strip() for gid in ALLOWED_GROUP_IDS_STR.split(",") if gid.strip()]
 
@@ -47,11 +47,14 @@ try:
 except Exception as e:
     logger.warning(f"Failed to get bot info at startup: {e}")
 
-# ⭐ OFFICIAL REAL GEMINI MODELS (Fast & Stable)
+# ⭐ ACTIVE GEMINI MODELS
 GEMINI_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro"
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash"
 ]
 
 # ⭐ GLOBAL QUIZ CACHE
@@ -75,7 +78,7 @@ def get_system_prompt():
         "- Use <i>italic</i> for English technical terms/dates.\n"
         "- End with: ━━━━━━━━━━━━━━━━━━━\n💡 <b>याद रखने योग्य ट्रिक / मुख्य बिंदु:</b> <i>[One-line powerful revision tip]</i>\n\n"
         "- Keep it CRISP, IMPACTFUL, NO unnecessary filler sentences.\n"
-        "- ONLY use valid Telegram HTML: <blockquote>, <b>, <i>, <code>. Do NOT use markdown (** or __). Ensure all tags are properly opened and closed."
+        "- ONLY use valid Telegram HTML: <blockquote>, <b>, <i>, <code>. Close all tags properly."
     )
 
 AUTO_TRIGGERS = [
@@ -102,7 +105,7 @@ def rotate_to_next_key():
     global current_key_index
     if len(GEMINI_KEYS_LIST) > 1:
         current_key_index = (current_key_index + 1) % len(GEMINI_KEYS_LIST)
-        logger.info(f"Switched to next API Key (Key #{current_key_index + 1} of {len(GEMINI_KEYS_LIST)})")
+        logger.info(f"Switched to next API Key (#{current_key_index + 1})")
 
 def is_tagged(text):
     if not BOT_USERNAME or not text:
@@ -118,7 +121,7 @@ def has_trigger_word(text):
             return True
     return False
 
-# ⭐⭐⭐ SAFE HTML SANITIZER & AUTO-CLOSER ⭐⭐⭐
+# ⭐ HTML SANITIZER & TAG CLOSER
 def md_to_html(text):
     if not text:
         return ""
@@ -130,21 +133,14 @@ def md_to_html(text):
         protected.append(match.group(0))
         return f"___SAFE_TAG_{len(protected)-1}___"
 
-    # Protect allowed HTML tags
     text = re.sub(r'</?(?:b|i|code|blockquote)>', protect_tag, text, flags=re.IGNORECASE)
-
-    # Escape HTML special chars
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    # Restore allowed tags
     for idx, tag in enumerate(protected):
         text = text.replace(f"___SAFE_TAG_{idx}___", tag)
 
-    # Dividers
     text = re.sub(r'[_]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
     text = re.sub(r'[-]{3,}', '━━━━━━━━━━━━━━━━━━━', text)
-
-    # Convert Markdown to HTML
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
     text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
@@ -159,7 +155,7 @@ def md_to_html(text):
 def safe_send_html(chat_id, text, reply_to_message_id=None):
     html_text = md_to_html(text)
 
-    # ⭐ ऑटो-क्लोज़ टैग्स ताकि Telegram Parse Error न आए
+    # खुद से अनक्लोज्ड टैग बंद करें
     for tag in ['b', 'i', 'code', 'blockquote']:
         open_tags = len(re.findall(f'<{tag}>', html_text, re.IGNORECASE))
         close_tags = len(re.findall(f'</{tag}>', html_text, re.IGNORECASE))
@@ -182,11 +178,34 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
         except Exception as e2:
             logger.error(f"Plain text fallback failed: {e2}")
 
-# ================= 2. GEMINI REST API =================
+# ================= 2. GEMINI REST API (AUTO-DISCOVERY) =================
+DISCOVERED_MODELS = []
+
+def get_live_models(api_key):
+    global DISCOVERED_MODELS
+    if DISCOVERED_MODELS:
+        return DISCOVERED_MODELS
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        with urllib.request.urlopen(url, timeout=6) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            live = []
+            for m in data.get("models", []):
+                if "generateContent" in m.get("supportedGenerationMethods", []):
+                    name = m.get("name", "").replace("models/", "")
+                    if "flash" in name:
+                        live.append(name)
+            if live:
+                DISCOVERED_MODELS = live
+                logger.info(f"Discovered active models from Google: {live}")
+                return live
+    except Exception:
+        pass
+    return GEMINI_MODELS
+
 def call_gemini(parts, system_instruction=None):
     total_keys = max(1, len(GEMINI_KEYS_LIST))
 
-    # ⭐ 2500 Tokens ताकि पूरा उत्तर विस्तार से आए और कभी न कटे
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
@@ -199,7 +218,6 @@ def call_gemini(parts, system_instruction=None):
             "parts": [{"text": system_instruction}]
         }
     encoded_data = json.dumps(payload).encode("utf-8")
-
     detailed_errors = []
 
     for key_attempt in range(total_keys):
@@ -207,7 +225,9 @@ def call_gemini(parts, system_instruction=None):
         if not active_key:
             return "⚠️ Render में कोई Gemini API Key नहीं मिली। कृपया GEMINI_API_KEY सेट करें।"
 
-        for model_name in GEMINI_MODELS:
+        models_to_try = get_live_models(active_key)
+
+        for model_name in models_to_try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key}"
             req = urllib.request.Request(
                 url,
@@ -224,20 +244,14 @@ def call_gemini(parts, system_instruction=None):
                         final_text = "".join(text_parts).strip()
                         if final_text:
                             return final_text
-                    detailed_errors.append(f"{model_name}: Empty candidates")
+                    detailed_errors.append(f"{model_name}: Empty")
             except urllib.error.HTTPError as e:
-                err_body = ""
-                try:
-                    err_body = e.read().decode("utf-8", errors="replace")[:150]
-                except Exception:
-                    pass
                 detailed_errors.append(f"{model_name}: HTTP {e.code}")
-                logger.warning(f"Key #{current_key_index + 1} | {model_name} HTTP {e.code}: {err_body}")
                 if e.code == 429:
                     time.sleep(1)
                 continue
             except Exception as e:
-                detailed_errors.append(f"{model_name}: {str(e)[:40]}")
+                detailed_errors.append(f"{model_name}: {str(e)[:30]}")
                 continue
 
         if len(GEMINI_KEYS_LIST) > 1:
@@ -254,28 +268,14 @@ def call_gemini(parts, system_instruction=None):
     )
 
 # ================= 3. OFFLINE QUIZ BANK =================
-DEFAULT_QUIZZES = [
+QUIZ_BANK = [
     {
         "question": "मानव शरीर की सबसे बड़ी ग्रंथि (Largest Gland) कौन सी है?",
         "options": ["यकृत (Liver)", "थायरॉयड (Thyroid)", "अग्न्याशय (Pancreas)", "पीयूष (Pituitary)"],
         "correct_option_id": 0,
-        "explanation": "मानव शरीर की सबसे बड़ी ग्रंथि यकृत (Liver) है, जिसका वजन लगभग 1.5 किलोग्राम होता है।"
-    },
-    {
-        "question": "प्रकाश वर्ष (Light Year) किसकी इकाई (Unit) है?",
-        "options": ["समय (Time)", "दूरी (Distance)", "प्रकाश की गति", "ऊर्जा (Energy)"],
-        "correct_option_id": 1,
-        "explanation": "प्रकाश वर्ष खगोलीय दूरी (Astronomical Distance) मापने की इकाई है।"
-    },
-    {
-        "question": "भारतीय संविधान का जनक किसे कहा जाता है?",
-        "options": ["महात्मा गांधी", "डॉ. बी. आर. अम्बेडकर", "जवाहरलाल नेहरू", "डॉ. राजेंद्र प्रसाद"],
-        "correct_option_id": 1,
-        "explanation": "डॉ. भीमराव अम्बेडकर को भारतीय संविधान का जनक माना जाता है।"
+        "explanation": "मानव शरीर की सबसे बड़ी ग्रंथि यकृत (Liver) है।"
     }
 ]
-
-QUIZ_BANK = DEFAULT_QUIZZES
 
 # ================= 4. RENDER 24/7 WEB SERVER =================
 class HealthHandler(BaseHTTPRequestHandler):
@@ -283,13 +283,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        status_msg = (
-            f"Bot: {BOT_USERNAME} (Running 24/7)\n"
-            f"Keys: {len(GEMINI_KEYS_LIST)}\n"
-            f"Cached Polls: {len(GLOBAL_QUIZ_CACHE)}\n"
-            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        self.wfile.write(status_msg.encode("utf-8"))
+        self.wfile.write(f"Bot {BOT_USERNAME} is Live 24/7".encode("utf-8"))
 
     def do_HEAD(self):
         self.send_response(200)
@@ -304,7 +298,6 @@ class HealthHandler(BaseHTTPRequestHandler):
 def run_health_server():
     try:
         server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
-        logger.info(f"Health server listening on port {PORT}")
         server.serve_forever()
     except Exception as e:
         logger.error(f"Health server error: {e}")
@@ -312,8 +305,6 @@ def run_health_server():
 threading.Thread(target=run_health_server, daemon=True).start()
 
 # ================= 5. TELEGRAM BOT HANDLERS =================
-
-# ⭐ LIVE POLL LISTENER (MAHIQUIZBOT & ANY POLL AUTO-CAPTURE)
 @bot.message_handler(content_types=['poll'])
 def auto_capture_group_polls(message):
     try:
@@ -331,14 +322,11 @@ def auto_capture_group_polls(message):
             "explanation": getattr(p, 'explanation', ''),
             "from_user": message.from_user.first_name if message.from_user else "QuizBot"
         }
-        logger.info(f"Captured Poll #{message.message_id}: {p.question[:40]}...")
-
-        # Keep cache trimmed to last 200 polls
         if len(GLOBAL_QUIZ_CACHE) > 200:
             for k in sorted(GLOBAL_QUIZ_CACHE.keys())[:50]:
                 del GLOBAL_QUIZ_CACHE[k]
     except Exception as e:
-        logger.error(f"Error capturing poll: {e}")
+        logger.error(f"Poll capture error: {e}")
 
 @bot.message_handler(commands=['id', 'groupid'])
 def send_group_id(message):
@@ -348,69 +336,38 @@ def send_group_id(message):
 def send_welcome(message):
     if not is_chat_allowed(message.chat.id):
         return
-
     text = (
         "<blockquote>"
         "📚 <b>अंतिम प्रहार™ AI Study Assistant</b> 🎓\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         "✨ <b>इस्तेमाल करने का तरीका:</b>\n"
-        "🔹 <b>क्विज़ हल:</b> MAHIQUIZBOT या किसी भी क्विज़ पर स्वाइप (Reply) करके लिखें: <code>explain in hindi</code>\n"
-        "🔹 <b>डाउट पूछें:</b> <code>/ask प्रकाश संश्लेषण क्या है?</code> या मुझे टैग करें\n"
-        "🔹 <b>फोटो सवाल:</b> प्रश्न की फोटो भेजें, बॉट तुरंत हल देगा 📸\n"
+        "🔹 MAHIQUIZBOT या किसी भी क्विज़ पर स्वाइप (Reply) करके लिखें: <code>explain in hindi</code>\n"
+        "🔹 डाउट पूछें: <code>/ask प्रकाश वर्ष क्या है?</code>\n"
+        "🔹 फोटो सवाल भेजें: बॉट तुरंत हल देगा 📸\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         "⚡ <i>24/7 Active Study Partner</i>"
         "</blockquote>"
     )
     safe_send_html(message.chat.id, text, reply_to_message_id=message.message_id)
 
-@bot.message_handler(commands=['quiz'])
-def send_quiz(message):
-    if not is_chat_allowed(message.chat.id):
-        return
-
-    q = random.choice(QUIZ_BANK)
-    try:
-        sent = bot.send_poll(
-            chat_id=message.chat.id,
-            question=q["question"],
-            options=q["options"],
-            type="quiz",
-            correct_option_id=q["correct_option_id"],
-            explanation=q.get("explanation", ""),
-            is_anonymous=False
-        )
-        GLOBAL_QUIZ_CACHE[sent.message_id] = {
-            "question": q["question"],
-            "options": q["options"],
-            "correct": q["options"][q["correct_option_id"]],
-            "explanation": q.get("explanation", ""),
-            "from_user": BOT_USERNAME
-        }
-    except Exception as e:
-        logger.error(f"Quiz send error: {e}")
-
 @bot.message_handler(commands=['ask'])
 def handle_ask(message):
     if not is_chat_allowed(message.chat.id):
         return
-
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        safe_send_html(message.chat.id, "कृपया सवाल भी लिखें। उदाहरण:\n<code>/ask प्रकाश वर्ष क्या है?</code>", reply_to_message_id=message.message_id)
+        safe_send_html(message.chat.id, "कृपया सवाल भी लिखें। उदा: <code>/ask प्रकाश संश्लेषण क्या है?</code>", reply_to_message_id=message.message_id)
         return
     answer_text_query(message, parts[1].strip())
 
-# सीधे फोटो भेजने पर
+# सीधे फोटो सवाल
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     if not is_chat_allowed(message.chat.id):
         return
-
     caption = message.caption or ""
     is_bot_tagged = is_tagged(caption)
-    is_reply_to_bot = (message.reply_to_message and
-                       message.reply_to_message.from_user and
-                       message.reply_to_message.from_user.id == BOT_ID)
+    is_reply_to_bot = (message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id == BOT_ID)
 
     if not (is_bot_tagged or is_reply_to_bot or caption.lower().startswith("/ask") or message.chat.type == "private"):
         return
@@ -423,19 +380,18 @@ def handle_photo(message):
 
         prompt = caption.replace(BOT_USERNAME, "").replace("/ask", "").strip()
         if not prompt:
-            prompt = "इस फोटो में दिए गए प्रश्न की गहन जांच करें, सही उत्तर पहचानें और 3-4 बुलेट पॉइंट्स में सरल हिंदी में समझाएं।"
+            prompt = "इस फोटो में दिए गए प्रश्न का सही उत्तर पहचानें और 3-4 बुलेट पॉइंट्स में स्पष्ट व्याख्या दें।"
 
         gemini_parts = [
             {"text": prompt},
             {"inlineData": {"mimeType": "image/jpeg", "data": base64_img}}
         ]
-
         answer = call_gemini(gemini_parts, get_system_prompt())
         safe_send_html(message.chat.id, answer, reply_to_message_id=message.message_id)
     except Exception as e:
-        logger.error(f"Photo handling error: {e}")
+        logger.error(f"Photo error: {e}")
 
-# ⭐⭐⭐ MAIN TEXT HANDLER: REPLIES & QUESTIONS ⭐⭐⭐
+# मुख्य टेक्स्ट / क्विज़ रिप्लाई
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     if not is_chat_allowed(message.chat.id):
@@ -472,7 +428,7 @@ def handle_text(message):
             downloaded = bot.download_file(file_info.file_path)
             base64_img = base64.b64encode(downloaded).decode("utf-8")
 
-            user_query = clean_text if clean_text else "इस फोटो में दिए गए प्रश्न का सही उत्तर और स्पष्टीकरण दें।"
+            user_query = clean_text if clean_text else "इस फोटो में दिए गए प्रश्न का सही उत्तर और व्याख्या दें।"
             if rep.caption:
                 user_query = f"फोटो कैप्शन: {rep.caption}\nछात्र का सवाल: {user_query}"
 
@@ -483,14 +439,13 @@ def handle_text(message):
             answer = call_gemini(gemini_parts, get_system_prompt())
             safe_send_html(message.chat.id, answer, reply_to_message_id=message.message_id)
         except Exception as e:
-            logger.error(f"Replied photo error: {e}")
+            logger.error(f"Photo reply error: {e}")
         return
 
     # 2. POLL / QUIZ REPLY
     quoted_content = ""
     if rep:
         rep_id = rep.message_id
-        # Cache check
         if rep_id in GLOBAL_QUIZ_CACHE:
             q_data = GLOBAL_QUIZ_CACHE[rep_id]
             opts_str = ", ".join(q_data["options"])
@@ -499,7 +454,6 @@ def handle_text(message):
                 quoted_content += f"\nमार्क किया गया उत्तर: {q_data['correct']}"
             if q_data.get("explanation"):
                 quoted_content += f"\nनोट्स/संकेत: {q_data['explanation']}"
-        # Telegram direct poll check
         elif rep.poll:
             opts = [opt.text for opt in rep.poll.options]
             quoted_content = f"क्विज़ पोल प्रश्न: {rep.poll.question}\nविकल्प: {', '.join(opts)}"
@@ -508,7 +462,6 @@ def handle_text(message):
                     quoted_content += f"\nसही विकल्प: {opts[rep.poll.correct_option_id]}"
             if getattr(rep.poll, 'explanation', None):
                 quoted_content += f"\nसंकेत: {rep.poll.explanation}"
-        # Standard text message reply
         elif rep.text:
             quoted_content = f"संदर्भ प्रश्न/मैसेज: {rep.text}"
         elif rep.caption:
@@ -538,7 +491,7 @@ def handle_text(message):
             "<blockquote>"
             "ℹ️ <b>क्विज़ डाउट समाधान:</b>\n"
             "━━━━━━━━━━━━━━━━━━━\n"
-            "इस पोल का टेक्स्ट Telegram प्राइवेसी के कारण लोड नहीं हुआ।\n\n"
+            "इस पोल का टेक्स्ट उपलब्ध नहीं हो पाया।\n\n"
             "💡 <b>तुरंत उत्तर पाने के लिए:</b>\n"
             "प्रश्न का 1-2 मुख्य शब्द साथ में लिखें (उदा: <code>explain पार्किंसंस</code>) या <b>स्क्रीनशॉट (फोटो)</b> भेजें! 📸"
             "</blockquote>"
@@ -569,23 +522,21 @@ def answer_text_query(message, query):
     except Exception as e:
         logger.error(f"Text query error: {e}")
 
-# ================= 6. START BOT (CRASH-PROOF POLLING) =================
+# ================= 6. START BOT =================
 if __name__ == "__main__":
     print("=" * 50)
-    print(f"✅ Bot successfully running as: {BOT_USERNAME} (ID: {BOT_ID})")
+    print(f"✅ Bot successfully running as: {BOT_USERNAME}")
     print(f"🔑 Loaded {len(GEMINI_KEYS_LIST)} Gemini API Key(s)")
-    print(f"🧠 Active Models: {', '.join(GEMINI_MODELS)}")
-    print(f"🌐 Health server running on port {PORT}")
+    print(f"🧠 Models: {', '.join(GEMINI_MODELS)}")
+    print(f"🌐 Health server on port {PORT}")
     print("=" * 50)
 
-    # Webhook को हटाना ताकि Polling टकराव न करे
     try:
         bot.delete_webhook(drop_pending_updates=True)
         time.sleep(1)
-    except Exception as e:
-        logger.warning(f"delete_webhook error: {e}")
+    except Exception:
+        pass
 
-    # Polling में सभी ज़रूरी updates को प्राप्त करना
     bot.infinity_polling(
         timeout=30,
         long_polling_timeout=30,
