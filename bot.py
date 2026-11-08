@@ -155,7 +155,7 @@ def md_to_html(text):
 def safe_send_html(chat_id, text, reply_to_message_id=None):
     html_text = md_to_html(text)
 
-    # खुद से अनक्लोज्ड टैग बंद करें
+    # ऑटो-क्लोज़ टैग्स
     for tag in ['b', 'i', 'code', 'blockquote']:
         open_tags = len(re.findall(f'<{tag}>', html_text, re.IGNORECASE))
         close_tags = len(re.findall(f'</{tag}>', html_text, re.IGNORECASE))
@@ -178,8 +178,9 @@ def safe_send_html(chat_id, text, reply_to_message_id=None):
         except Exception as e2:
             logger.error(f"Plain text fallback failed: {e2}")
 
-# ================= 2. GEMINI REST API (AUTO-DISCOVERY) =================
+# ================= 2. GEMINI REST API (SUPER FAST & CACHED) =================
 DISCOVERED_MODELS = []
+BEST_WORKING_MODEL = None  # ⭐ काम करने वाला मॉडल याद रखने के लिए
 
 def get_live_models(api_key):
     global DISCOVERED_MODELS
@@ -187,7 +188,7 @@ def get_live_models(api_key):
         return DISCOVERED_MODELS
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-        with urllib.request.urlopen(url, timeout=6) as response:
+        with urllib.request.urlopen(url, timeout=5) as response:
             data = json.loads(response.read().decode("utf-8"))
             live = []
             for m in data.get("models", []):
@@ -197,20 +198,21 @@ def get_live_models(api_key):
                         live.append(name)
             if live:
                 DISCOVERED_MODELS = live
-                logger.info(f"Discovered active models from Google: {live}")
+                logger.info(f"Discovered models: {live}")
                 return live
     except Exception:
         pass
     return GEMINI_MODELS
 
 def call_gemini(parts, system_instruction=None):
+    global BEST_WORKING_MODEL
     total_keys = max(1, len(GEMINI_KEYS_LIST))
 
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "maxOutputTokens": 2500,
-            "temperature": 0.3
+            "maxOutputTokens": 1200,   # तेज़ रिस्पॉन्स के लिए ऑप्टिमाइज़्ड
+            "temperature": 0.2
         }
     }
     if system_instruction:
@@ -225,7 +227,12 @@ def call_gemini(parts, system_instruction=None):
         if not active_key:
             return "⚠️ Render में कोई Gemini API Key नहीं मिली। कृपया GEMINI_API_KEY सेट करें।"
 
-        models_to_try = get_live_models(active_key)
+        models_to_try = list(get_live_models(active_key))
+
+        # ⭐ जो मॉडल काम कर चुका है, उसे सबसे पहले चलाएं (सुपर फास्ट 2s)
+        if BEST_WORKING_MODEL and BEST_WORKING_MODEL in models_to_try:
+            models_to_try.remove(BEST_WORKING_MODEL)
+            models_to_try.insert(0, BEST_WORKING_MODEL)
 
         for model_name in models_to_try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={active_key}"
@@ -235,7 +242,7 @@ def call_gemini(parts, system_instruction=None):
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=25) as response:
+                with urllib.request.urlopen(req, timeout=12) as response:
                     result = json.loads(response.read().decode("utf-8"))
                     candidates = result.get("candidates", [])
                     if candidates:
@@ -243,15 +250,15 @@ def call_gemini(parts, system_instruction=None):
                         text_parts = [p.get("text", "") for p in parts_out if "text" in p and not p.get("thought", False)]
                         final_text = "".join(text_parts).strip()
                         if final_text:
+                            # सफल मॉडल को सेव कर लिया ताकि अगली बार तुरंत उत्तर मिले
+                            BEST_WORKING_MODEL = model_name
                             return final_text
                     detailed_errors.append(f"{model_name}: Empty")
             except urllib.error.HTTPError as e:
                 detailed_errors.append(f"{model_name}: HTTP {e.code}")
-                if e.code == 429:
-                    time.sleep(1)
                 continue
             except Exception as e:
-                detailed_errors.append(f"{model_name}: {str(e)[:30]}")
+                detailed_errors.append(f"{model_name}: {str(e)[:25]}")
                 continue
 
         if len(GEMINI_KEYS_LIST) > 1:
@@ -263,7 +270,7 @@ def call_gemini(parts, system_instruction=None):
         "💡 <b>उत्तर तैयार करने में तकनीकी समस्या आई!</b>\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         f"⚠️ <i>{err_summary}</i>\n\n"
-        "कृपया 5 सेकंड बाद पुनः स्वाइप (Reply) करके <code>explain</code> लिखें।"
+        "कृपया 5 सेकंड बाद पुनः स्वाइप करके <code>explain</code> लिखें।"
         "</blockquote>"
     )
 
@@ -515,6 +522,7 @@ def handle_text(message):
 
 def answer_text_query(message, query):
     try:
+        # तुरंत Typing दिखाना शुरू करें
         bot.send_chat_action(message.chat.id, "typing")
         parts = [{"text": query}]
         answer = call_gemini(parts, get_system_prompt())
